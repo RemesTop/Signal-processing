@@ -1,4 +1,4 @@
-# Signal processing
+# Signal Processing
 
 This is a python project intended for the course Industrial Project 2026
 
@@ -10,21 +10,9 @@ This is a python project intended for the course Industrial Project 2026
 - Install requirements if needed
 - Run scripts (With venv)
 
-## Structure
-
-There is 3 folders in the project:
-
-shared:
-- Contains code used in both cases, such as reading csv data from data folder
-visualization:
-- Contains the code used in visualizasing the data
-detection:
-- Contains code used in detecting peaks in the signal data
-
 ## Requirements
 
-- pandas
-- matplotlib
+Listed inside requirements.txt
 
 You can install all requirements with venv:
 
@@ -36,11 +24,11 @@ You can install all requirements with venv:
 
 Example:
 
-```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
+   ```powershell
+   py -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   pip install -r requirements.txt
+   ```
 
 Then run scripts from the activated venv:
 
