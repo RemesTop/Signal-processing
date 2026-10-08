@@ -1,11 +1,20 @@
 import numpy as np
 from pathlib import Path
+from PySide6.QtCore import QObject, Signal, QThreadPool
 from signal_converter import SignalConverter
+from worker import Worker
 
 # A class to read .dat binary files by slices and downsample them for easier usage
-class SignalReader:
-    def __init__(self, file_path, sample_rate=50000):
+class SignalReader(QObject):
+    ready = Signal()
+    progress = Signal(float)
+
+    # Does not use multithreading by default for the time being. 
+    def __init__(self, file_path, sample_rate=50000, multithreading=False):
+        super().__init__()
         self.sample_rate = sample_rate
+        self.data = None
+        self.total_samples = 0
         file_path = Path(file_path)
 
         # If given a CSV file, check for cached .dat or convert it
@@ -13,11 +22,26 @@ class SignalReader:
             self.dat_path = file_path.with_suffix(".dat")
             if not self.dat_path.exists():
                 print(f"Converting {file_path.name} to binary (.dat).. This is done once.")
-                converter = SignalConverter()
-                converter.start(file_path, self.dat_path)
+                self.converter = SignalConverter()
+                
+                if multithreading == True:
+                    self.worker = Worker(
+                        self.converter.start, 
+                        source_signal_path=file_path, 
+                        target_signal_path=self.dat_path
+                    )
+                    self.worker.signals.finished.connect(self._init_memmap)
+                    self.worker.signals.progress.connect(self.progress.emit)
+                    QThreadPool.globalInstance().start(self.worker)
+                    return  # Data will be mapped later when finished
+                else:
+                    self.converter.start(file_path, self.dat_path)
         else:
             self.dat_path = file_path
 
+        self._init_memmap()
+
+    def _init_memmap(self):
         # Calculate row count from file size (For 2 channels = 4 bytes per row)
         file_bytes = self.dat_path.stat().st_size
         self.total_samples = file_bytes // 4
@@ -29,10 +53,15 @@ class SignalReader:
             mode="r",
             shape=(self.total_samples, 2)
         )
+        self.ready.emit()
 
     # Get a slice of the signal, downsampled with decimation by default
     # max_points dictates the amount of downsampling. Higher value: more downsampling, more inaccurate
     def get_slice(self, start_sec, end_sec, max_points=5, downsample="decimation"):
+        # If data is not ready (e.g. conversion still running), return empty arrays
+        if self.data is None:
+            return np.array([]), np.array([])
+
         start_idx = max(0, int(start_sec * self.sample_rate))
         end_idx = min(self.total_samples, int(end_sec * self.sample_rate))
 
