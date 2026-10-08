@@ -30,7 +30,7 @@ class SignalReader:
             shape=(self.total_samples, 2)
         )
 
-    # Get a slice of the signal, downsampled with minmax by default
+    # Get a slice of the signal, downsampled with decimation by default
     # max_points dictates the amount of downsampling. Higher value: more downsampling, more inaccurate
     def get_slice(self, start_sec, end_sec, max_points=5, downsample="decimation"):
         start_idx = max(0, int(start_sec * self.sample_rate))
@@ -45,23 +45,15 @@ class SignalReader:
             time_axis = np.linspace(start_sec, end_sec, total)
             return time_axis, raw_slice
 
-        if downsample == "minmax":
-            # Min-max: split into buckets and find min and max values for each
-            n_buckets = max_points // 2
+        if downsample == "highest_points":
+            # Highest points: split into buckets and find max values for each
+            n_buckets = max_points
             bucket_size = total // n_buckets
 
             trimmed = raw_slice[:n_buckets * bucket_size]
             reshaped = trimmed.reshape(n_buckets, bucket_size, 2)
 
-            mins = reshaped.min(axis=1)
-            maxs = reshaped.max(axis=1)
-
-            # Interleave min and max so the line goes up and down
-            #e.g.
-            # Line values: min max min max min max min max
-            downsampled = np.empty((n_buckets * 2, 2), dtype=raw_slice.dtype)
-            downsampled[0::2] = mins
-            downsampled[1::2] = maxs
+            downsampled = reshaped.max(axis=1)
         elif downsample == "decimation":
             # Another option for downsampling
             # Decimation: just take every Nth point. May lose important spikes
