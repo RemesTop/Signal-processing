@@ -1,8 +1,11 @@
+import threading
 import numpy as np
 from pathlib import Path
 from PySide6.QtCore import QObject, Signal, QThreadPool
 from signal_converter import SignalConverter
 from worker import Worker
+
+import downsampler
 
 # A class to read .dat binary files by slices and downsample them for easier usage
 class SignalReader(QObject):
@@ -23,19 +26,16 @@ class SignalReader(QObject):
             if not self.dat_path.exists():
                 print(f"Converting {file_path.name} to binary (.dat).. This is done once.")
                 self.converter = SignalConverter()
+                tmp_path = self.dat_path.with_suffix(".tmp")
                 
-                if multithreading == True:
-                    self.worker = Worker(
-                        self.converter.start, 
-                        source_signal_path=file_path, 
-                        target_signal_path=self.dat_path
-                    )
-                    self.worker.signals.finished.connect(self._init_memmap)
-                    self.worker.signals.progress.connect(self.progress.emit)
-                    QThreadPool.globalInstance().start(self.worker)
-                    return  # Data will be mapped later when finished
-                else:
-                    self.converter.start(file_path, self.dat_path)
+                thread = threading.Thread(
+                    target=self.converter.start, 
+                    args=(file_path, tmp_path)
+                )
+                thread.start()
+                thread.join()
+
+                tmp_path.rename(self.dat_path)
         else:
             self.dat_path = file_path
 
@@ -55,9 +55,12 @@ class SignalReader(QObject):
         )
         self.ready.emit()
 
-    # Get a slice of the signal, downsampled with decimation by default
-    # max_points dictates the amount of downsampling. Higher value: more downsampling, more inaccurate
-    def get_slice(self, start_sec, end_sec, max_points=5, downsample="decimation"):
+    def _downsample(self, raw_slice, downsample_factor, downsample):
+        return downsampler.downsample(raw_slice, downsample_factor, method=downsample)
+
+    # Get a slice of the signal, raw by default (downsampling can be optionally enabled)
+    # downsample_factor dictates how many times smaller the data will be. Higher value: more downsampling, more inaccurate
+    def get_slice(self, start_sec, end_sec, downsample_factor=1, downsample=None):
         # If data is not ready (e.g. conversion still running), return empty arrays
         if self.data is None:
             return np.array([]), np.array([])
@@ -68,26 +71,12 @@ class SignalReader(QObject):
         raw_slice = self.data[start_idx:end_idx]
         total = len(raw_slice)
 
-        # If the slice is already small enough, no downsampling needed
-        # OR if downsample mode is set to none, return raw data
-        if total <= max_points or downsample == "none":
+        # If no downsampling requested or factor <= 1, return raw data
+        if downsample in (None, "none") or downsample_factor <= 1 or total <= downsample_factor:
             time_axis = np.linspace(start_sec, end_sec, total)
             return time_axis, raw_slice
 
-        if downsample == "highest_points":
-            # Highest points: split into buckets and find max values for each
-            n_buckets = max_points
-            bucket_size = total // n_buckets
-
-            trimmed = raw_slice[:n_buckets * bucket_size]
-            reshaped = trimmed.reshape(n_buckets, bucket_size, 2)
-
-            downsampled = reshaped.max(axis=1)
-        elif downsample == "decimation":
-            # Another option for downsampling
-            # Decimation: just take every Nth point. May lose important spikes
-            step = total // max_points
-            downsampled = raw_slice[::step]
+        downsampled = self._downsample(raw_slice, downsample_factor, downsample)
 
         # Create time axis based on start/end and amount of points
         # Can be used for reading samples or working with matplotlib
