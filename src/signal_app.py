@@ -88,14 +88,11 @@ class SignalApp(QWidget):
         super().closeEvent(event)
 
     def browse_file(self):
-        current = self.file_input.text().strip()
-        directory = str(Path(current).parent) if current and Path(current).parent.exists() else ""
-        file_filter = "Data File (*.csv *.dat);;All Files (*)"
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select a file",
-            directory,
-            file_filter
+            "",
+            "Data File (*.csv *.dat);;All Files (*)"
         )
         if file_path:
             self.file_input.setText(file_path)
@@ -106,17 +103,28 @@ class SignalApp(QWidget):
         if not file_path:
             return
 
-        p = Path(file_path)
-        if p.suffix.lower() == ".csv" and not p.with_suffix(".dat").exists():
-            self.plot_widget.setTitle("Converting csv to binary, please wait")
-            QApplication.processEvents()
+        self.btn.setEnabled(False)
+        self.reader = SignalReader(file_path, multithreading=True)
 
-        reader = SignalReader(file_path)
+        # If data is already converted, plot it
+        if self.reader.data is not None:
+            self.plot_data()
+        else:
+            # Wait for background conversion to finish
+            self.plot_widget.setTitle("Converting csv to binary, please wait")
+            self.reader.progress.connect(self.update_progress)
+            self.reader.ready.connect(self.plot_data)
+
+    def update_progress(self, percent):
+        self.plot_widget.setTitle(f"Converting csv to binary, please wait {percent:.0f}%")
+
+    def plot_data(self):
         method = self.combo.currentText()
         factor = self.factor_input.value()
-        time, signal = reader.get_slice(0, 5, downsample_factor=factor, downsample=method)
+        time, signal = self.reader.get_slice(0, 5, downsample_factor=factor, downsample=method)
         plot_signal(self.plot_widget, time, signal)
         self.plot_widget.setTitle(f"Points: {len(time)}, Downsampling method: {method}")
+        self.btn.setEnabled(True)
 
 
 def main():

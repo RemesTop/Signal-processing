@@ -1,4 +1,3 @@
-import threading
 import numpy as np
 from pathlib import Path
 from PySide6.QtCore import QObject, Signal, QThreadPool
@@ -12,7 +11,6 @@ class SignalReader(QObject):
     ready = Signal()
     progress = Signal(float)
 
-    # Does not use multithreading by default for the time being. 
     def __init__(self, file_path, sample_rate=50000, multithreading=False):
         super().__init__()
         self.sample_rate = sample_rate
@@ -26,20 +24,33 @@ class SignalReader(QObject):
             if not self.dat_path.exists():
                 print(f"Converting {file_path.name} to binary (.dat).. This is done once.")
                 self.converter = SignalConverter()
-                tmp_path = self.dat_path.with_suffix(".tmp")
-                
-                thread = threading.Thread(
-                    target=self.converter.start, 
-                    args=(file_path, tmp_path)
-                )
-                thread.start()
-                thread.join()
+                self.tmp_path = self.dat_path.with_suffix(".tmp")
 
-                tmp_path.rename(self.dat_path)
+                # If multithreading is enabled, run conversion in the background
+                if multithreading:
+                    worker = Worker(
+                        self.converter.start,
+                        source_signal_path=file_path,
+                        target_signal_path=self.tmp_path
+                    )
+                    worker.signals.progress.connect(self.progress.emit)
+                    worker.signals.result.connect(self.on_conversion_finished)
+                    QThreadPool.globalInstance().start(worker)
+                    return
+                else:
+                    # Otherwise convert directly (blocks until done)
+                    self.converter.start(file_path, self.tmp_path)
+                    self.tmp_path.replace(self.dat_path)
         else:
             self.dat_path = file_path
 
         self._init_memmap()
+
+    def on_conversion_finished(self, success):
+        # Called when background worker finishes
+        if success and self.tmp_path.exists():
+            self.tmp_path.replace(self.dat_path)
+            self._init_memmap()
 
     def _init_memmap(self):
         # Calculate row count from file size (For 2 channels = 4 bytes per row)

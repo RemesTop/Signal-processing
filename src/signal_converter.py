@@ -98,9 +98,11 @@ class SignalConverter:
         if not self.cancelled and progress_callback:
             # Finish the progress bar.
             progress_callback.emit(100)
-        if self.cancelled and progress_callback:
-            del data
-            target_signal_path.unlink()
-            progress_callback.emit(0)
+        del data
+        if self.cancelled:
+            if target_signal_path.exists():
+                target_signal_path.unlink()
+            if progress_callback:
+                progress_callback.emit(0)
 
         return not self.cancelled
