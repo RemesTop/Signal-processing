@@ -5,7 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-    QLineEdit, QComboBox, QPushButton, QSpinBox
+    QLineEdit, QComboBox, QPushButton, QSpinBox, QFileDialog
 )
 from PySide6.QtCore import QSettings
 import pyqtgraph as pg
@@ -23,9 +23,11 @@ class SignalApp(QWidget):
         settings_file = Path(__file__).resolve().parent / "settings.ini"
         self.settings = QSettings(str(settings_file), QSettings.IniFormat)
 
-        # 1. Text input for file path
+        # 1. Text input for file path and browse button
         self.file_input = QLineEdit()
         self.file_input.setPlaceholderText("File path")
+        self.browse_btn = QPushButton("Browse")
+        self.browse_btn.clicked.connect(self.browse_file)
 
         # 2. Dropdown for downsample method
         self.combo = QComboBox()
@@ -51,6 +53,7 @@ class SignalApp(QWidget):
         # Layout
         top_layout = QHBoxLayout()
         top_layout.addWidget(self.file_input)
+        top_layout.addWidget(self.browse_btn)
         top_layout.addWidget(self.combo)
         top_layout.addWidget(self.factor_input)
         top_layout.addWidget(self.btn)
@@ -83,6 +86,19 @@ class SignalApp(QWidget):
     def closeEvent(self, event):
         self.save_settings()
         super().closeEvent(event)
+
+    def browse_file(self):
+        current = self.file_input.text().strip()
+        directory = str(Path(current).parent) if current and Path(current).parent.exists() else ""
+        file_filter = "Data File (*.csv *.dat);;All Files (*)"
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select a file",
+            directory,
+            file_filter
+        )
+        if file_path:
+            self.file_input.setText(file_path)
 
     def visualize(self):
         self.save_settings()
