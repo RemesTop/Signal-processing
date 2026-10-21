@@ -45,6 +45,7 @@ class SignalApp(QWidget):
         self.plot_widget.showGrid(x=True, y=True)
         self.plot_widget.setLabel("bottom", "Time", units="s")
         self.plot_widget.setLabel("left", "Reading")
+        self.plot_widget.setTitle(" ")
         self.factor_input.setPrefix("Factor: ")
 
         # Layout
@@ -88,6 +89,11 @@ class SignalApp(QWidget):
         file_path = self.file_input.text().strip()
         if not file_path:
             return
+
+        p = Path(file_path)
+        if p.suffix.lower() == ".csv" and not p.with_suffix(".dat").exists():
+            self.plot_widget.setTitle("Converting csv to binary, please wait")
+            QApplication.processEvents()
 
         reader = SignalReader(file_path)
         method = self.combo.currentText()
