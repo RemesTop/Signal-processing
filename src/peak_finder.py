@@ -3,7 +3,41 @@ Intented to be collection of functions to find peaks in a given data set.
 Or just a single peak finding algorithm, wil have to see how it goes.
 """
 import numpy as np
-from scipy.signal import find_peaks, peak_widths
+from scipy.signal import find_peaks, peak_widths, butter, sosfiltfilt
+
+from downsampler import downsample
+from signal_constants import DEFAULT_SAMPLE_RATE
+
+
+
+# -------------------------------------------------- Filtering
+
+
+def butterworth_lowpass_filter(
+    x: np.ndarray,
+    cutoff: float | None = None,
+    fs: float = DEFAULT_SAMPLE_RATE,
+    decimation_factor: int = 1,
+    nyquist_cutoff_multiplier: float = 0.8,
+    order: int = 4,
+) -> np.ndarray:
+    """
+    Low-pass filter that keeps the cutoff below the the output Nyquist
+    frequency based on `decimation_factor` and `nyquist_cutoff_multiplier`.
+    """
+    output_nyquist = fs / (2 * decimation_factor)
+    max_cutoff = nyquist_cutoff_multiplier * output_nyquist
+    cutoff = max_cutoff if cutoff is None else min(cutoff, max_cutoff)
+
+    sos = butter(order, cutoff, btype="low", fs=fs, output="sos")
+    
+    default_padlen = 3 * (2 * len(sos) + 1 - min((sos[:, 2] == 0).sum(),
+                                                 (sos[:, 5] == 0).sum()))
+    return sosfiltfilt(sos, x, padlen=min(default_padlen, x.size - 1))
+
+
+
+# -------------------------------------------------- Finder functions
 
 
 class peak_finder:
