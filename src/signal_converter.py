@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import Signal
 
+from signal_constants import DEFAULT_SAMPLE_RATE
 
 class SignalConverter:
     """Convert a CSV-signal file into a binary data file.
@@ -73,7 +74,7 @@ class SignalConverter:
         )
 
         # Read the CSV-file row-by-row writing it into the binary data file. This approach is slow, but it allows full
-        # control of the reading process - every 50000 points or 1 second of data, the progress bar is updated.
+        # control of the reading process - every 1 second of data, the progress bar is updated.
         # Using some other reader that allows larger chunks could be more efficient than this.
         with source_signal_path.open() as source_signal_file:
             reader = csv.reader(source_signal_file)
@@ -82,11 +83,11 @@ class SignalConverter:
                 if not row:
                     continue
                 data[index, :] = row
-                if index % (50000 * 60) == 0:
+                if index % (DEFAULT_SAMPLE_RATE * 60) == 0:
                     # Force the data array to write changes to disk. This presumably happens automatically too at
                     # implementation-defined points, but this the API provided to the numpy users.
                     data.flush()
-                if progress_callback and index % 50000 == 0:
+                if progress_callback and index % DEFAULT_SAMPLE_RATE == 0:
                     progress_callback.emit((index / row_count) * 100)
 
                 if self.cancelled:
