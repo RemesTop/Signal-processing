@@ -3,11 +3,11 @@ Intented to be collection of functions to find peaks in a given data set.
 Or just a single peak finding algorithm, wil have to see how it goes.
 """
 import numpy as np
-from scipy.signal import find_peaks, peak_widths, butter, sosfiltfilt
+from scipy.signal import find_peaks, peak_widths, butter, sosfiltfilt, decimate
 
 from downsampler import downsample
 from signal_constants import DEFAULT_SAMPLE_RATE
-
+from signal_classes import AnalysisResult, Slice
 
 
 # -------------------------------------------------- Filtering
@@ -37,7 +37,105 @@ def butterworth_lowpass_filter(
 
 
 
-# -------------------------------------------------- Finder functions
+# -------------------------------------------------- Analysis functions
+
+
+def raw_signal_with_peaks(s: Slice, out: AnalysisResult, downsample_factor: int):
+    min_distance = max(1, int(0.005 * s.sample_rate) / downsample_factor) # Minimum distance between separate peaks
+
+    for ch in range(s.channels):
+        x = s.data[:, ch]
+        
+        # Create line
+        out.line(f"channel {ch + 1}", s.time, x, color=ch)
+        
+        # Find peaks
+        idx, properties = find_peaks(x, distance=min_distance, prominence=40)
+        out.peaks(s.time[idx], x[idx],
+                  label=f"channel {ch + 1} peaks")
+
+
+# TODO never do any downsampling before calling the following functions
+def scipy_decimation(s: Slice, out: AnalysisResult):
+    decimation_factor = 10
+    min_distance = max(1, int((0.005 * s.sample_rate) / decimation_factor)) # Minimum distance between separate peaks
+    
+    for ch in range(s.channels):
+        x = s.data[:, ch]
+        
+        time = s.time[::decimation_factor]
+        x = decimate(x, decimation_factor)
+        # x = downsample(x, downsample_factor)
+        
+        # Create line
+        out.line(f"channel {ch + 1}", time, x, color=ch)
+        
+        # Find peaks
+        idx, properties = find_peaks(x, distance=min_distance, prominence=40)
+        out.peaks(time[idx], x[idx],
+                  label=f"channel {ch + 1} peaks")
+
+
+def custom_decimation(s: Slice, out: AnalysisResult):
+    decimation_factor = 10
+    min_distance = max(1, int((0.005 * s.sample_rate) / decimation_factor)) # Minimum distance between separate peaks
+    
+    for ch in range(s.channels):
+        x = s.data[:, ch]
+        
+        x = butterworth_lowpass_filter(
+            x,
+            decimation_factor=decimation_factor,
+            cutoff=None,
+            fs=s.sample_rate,
+        )
+        
+        time = s.time[::decimation_factor]
+        x = downsample(x, decimation_factor)
+        
+        out.line(f"channel {ch + 1}", time, x, color=ch)
+        
+        # Find peaks
+        idx, properties = find_peaks(x, distance=min_distance, prominence=40)
+        out.peaks(time[idx], x[idx],
+                  label=f"channel {ch + 1} peaks")
+
+
+def extra_lowpass(s: Slice, out: AnalysisResult):
+    decimation_factor = 10
+    min_distance = max(1, int((0.005 * s.sample_rate) / decimation_factor)) # Minimum distance between separate peaks
+    
+    cutoff = 250
+    
+    for ch in range(s.channels):
+        x = s.data[:, ch]
+        
+        x = butterworth_lowpass_filter(
+            x,
+            decimation_factor=decimation_factor,
+            fs=s.sample_rate,
+        )
+        
+        time = s.time[::decimation_factor]
+        x = downsample(x, decimation_factor)
+        
+        # More low-pass for removing noise
+        x = butterworth_lowpass_filter(
+            x,
+            cutoff=cutoff,
+            fs=s.sample_rate / decimation_factor
+        )
+        
+        out.line(f"channel {ch + 1}", time, x, color=ch)
+        
+        # Find peaks
+        idx, properties = find_peaks(x, distance=min_distance, prominence=40)
+        out.peaks(time[idx], x[idx],
+                  label=f"channel {ch + 1} peaks")
+
+
+
+# -------------------------------------------------- Peak finder
 
 
 class peak_finder:

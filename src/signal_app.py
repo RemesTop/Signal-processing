@@ -11,6 +11,8 @@ from PySide6.QtCore import QSettings
 import pyqtgraph as pg
 from signal_reader import SignalReader
 from visualize_data import plot_signal
+from signal_classes import AnalysisResult
+from peak_finder import raw_signal_with_peaks
 
 # Main app window for the project
 class SignalApp(QWidget):
@@ -121,8 +123,15 @@ class SignalApp(QWidget):
     def plot_data(self):
         method = self.combo.currentText()
         factor = self.factor_input.value()
+        
         signal_slice = self.reader.get_slice(0, 5, downsample_factor=factor, downsample=method)
-        plot_signal(self.plot_widget, signal_slice)
+        
+        # TODO signal analysis functions can be added here
+        # result = AnalysisResult.line_from_slice(signal_slice)
+        result = AnalysisResult(signal_slice)
+        raw_signal_with_peaks(signal_slice, result, factor)
+        
+        plot_signal(self.plot_widget, result)
         self.plot_widget.setTitle(f"Points: {len(signal_slice.time)}, Downsampling method: {method}")
         self.btn.setEnabled(True)
 
