@@ -15,7 +15,7 @@ def downsample(raw_slice, downsample_factor=1, method="decimation"):
         n_buckets = total // bucket_size
 
         trimmed = raw_slice[:n_buckets * bucket_size]
-        reshaped = trimmed.reshape(n_buckets, bucket_size, 2)
+        reshaped = trimmed.reshape((n_buckets, bucket_size, *raw_slice.shape[1:]))
 
         downsampled = reshaped.max(axis=1)
     elif method == "decimation":

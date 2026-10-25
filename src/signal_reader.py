@@ -6,6 +6,7 @@ from worker import Worker
 
 import downsampler
 from signal_constants import DEFAULT_SAMPLE_RATE
+from signal_classes import Slice
 
 # A class to read .dat binary files by slices and downsample them for easier usage
 class SignalReader(QObject):
@@ -72,10 +73,10 @@ class SignalReader(QObject):
 
     # Get a slice of the signal, raw by default (downsampling can be optionally enabled)
     # downsample_factor dictates how many times smaller the data will be. Higher value: more downsampling, more inaccurate
-    def get_slice(self, start_sec, end_sec, downsample_factor=1, downsample=None):
+    def get_slice(self, start_sec, end_sec, downsample_factor=1, downsample=None) -> Slice:
         # If data is not ready (e.g. conversion still running), return empty arrays
         if self.data is None:
-            return np.array([]), np.array([])
+            return Slice(np.array([]), np.empty((0, 2), dtype=np.int16))
 
         start_idx = max(0, int(start_sec * self.sample_rate))
         end_idx = min(self.total_samples, int(end_sec * self.sample_rate))
@@ -86,11 +87,11 @@ class SignalReader(QObject):
         # If no downsampling requested or factor <= 1, return raw data
         if downsample in (None, "none") or downsample_factor <= 1 or total <= downsample_factor:
             time_axis = np.linspace(start_sec, end_sec, total)
-            return time_axis, raw_slice
+            return Slice(time_axis, raw_slice)
 
         downsampled = self._downsample(raw_slice, downsample_factor, downsample)
 
         # Create time axis based on start/end and amount of points
         # Can be used for reading samples or working with matplotlib
         time_axis = np.linspace(start_sec, end_sec, len(downsampled))
-        return time_axis, downsampled
+        return Slice(time_axis, downsampled)

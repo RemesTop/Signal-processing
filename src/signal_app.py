@@ -121,9 +121,9 @@ class SignalApp(QWidget):
     def plot_data(self):
         method = self.combo.currentText()
         factor = self.factor_input.value()
-        time, signal = self.reader.get_slice(0, 5, downsample_factor=factor, downsample=method)
-        plot_signal(self.plot_widget, time, signal)
-        self.plot_widget.setTitle(f"Points: {len(time)}, Downsampling method: {method}")
+        signal_slice = self.reader.get_slice(0, 5, downsample_factor=factor, downsample=method)
+        plot_signal(self.plot_widget, signal_slice)
+        self.plot_widget.setTitle(f"Points: {len(signal_slice.time)}, Downsampling method: {method}")
         self.btn.setEnabled(True)
 
 
