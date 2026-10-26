@@ -31,6 +31,7 @@ def butterworth_lowpass_filter(
 
     sos = butter(order, cutoff, btype="low", fs=fs, output="sos")
     
+    # Default signal padding from sosfiltfilt
     default_padlen = 3 * (2 * len(sos) + 1 - min((sos[:, 2] == 0).sum(),
                                                  (sos[:, 5] == 0).sum()))
     return sosfiltfilt(sos, x, padlen=min(default_padlen, x.size - 1))
@@ -41,6 +42,15 @@ def butterworth_lowpass_filter(
 
 
 def raw_signal_with_peaks(s: Slice, out: AnalysisResult, downsample_factor: int):
+    """Basic peak detection without pre-processing. Specify the factor of any
+    downsampling that has already been done.
+
+    **Line:**<br>
+    Unprocessed.
+
+    **Peaks:**<br>
+    `scipy.signal.find_peaks` with a 5 ms minimum peak distance and 40 prominence.
+    """
     min_distance = max(1, int(0.005 * s.sample_rate) / downsample_factor) # Minimum distance between separate peaks
 
     for ch in range(s.channels):
@@ -57,6 +67,15 @@ def raw_signal_with_peaks(s: Slice, out: AnalysisResult, downsample_factor: int)
 
 # TODO never do any downsampling before calling the following functions
 def scipy_decimation(s: Slice, out: AnalysisResult):
+    """SciPy's decimation and peak finding. Don't downsample the signal
+    before passing to this function.
+
+    **Line:**<br>
+    Decimated by a factor of 10 with `scipy.signal.decimate`.
+
+    **Peaks:**<br>
+    `scipy.signal.find_peaks` with a 5 ms minimum peak distance and 40 prominence.
+    """
     decimation_factor = 10
     min_distance = max(1, int((0.005 * s.sample_rate) / decimation_factor)) # Minimum distance between separate peaks
     
@@ -77,6 +96,15 @@ def scipy_decimation(s: Slice, out: AnalysisResult):
 
 
 def custom_decimation(s: Slice, out: AnalysisResult):
+    """Low-pass filter and downsample, then SciPy peak finding.
+
+    **Line:**<br>
+    Downsampled by a factor of 10 using `butterworth_lowpass_filter` and
+    `downsampler.downsample`.
+
+    **Peaks:**<br>
+    `scipy.signal.find_peaks` with a 5 ms minimum peak distance and 40 prominence.
+    """
     decimation_factor = 10
     min_distance = max(1, int((0.005 * s.sample_rate) / decimation_factor)) # Minimum distance between separate peaks
     
@@ -102,6 +130,15 @@ def custom_decimation(s: Slice, out: AnalysisResult):
 
 
 def extra_lowpass(s: Slice, out: AnalysisResult):
+    """`custom_decimation` with an added low-pass filter after downsampling.
+
+    **Line:**<br>
+    Downsampled by a factor of 10 using `butterworth_lowpass_filter` and
+    `downsampler.downsample`. Then low-pass filter at 250 Hz.
+
+    **Peaks:**<br>
+    `scipy.signal.find_peaks` with a 5 ms minimum peak distance and 40 prominence.
+    """
     decimation_factor = 10
     min_distance = max(1, int((0.005 * s.sample_rate) / decimation_factor)) # Minimum distance between separate peaks
     

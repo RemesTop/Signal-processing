@@ -67,9 +67,25 @@ class AnalysisResult:
     peak_sets: list[PeakSet]    = field(default_factory=list)
 
     def line(self, label: str, x: np.ndarray, y: np.ndarray, color: Color = 0) -> None:
+        """Adds a labeled line to this analysis result.
+
+        Args:
+            label: Text label for the line.
+            x: One-dimensional array of x-coordinates.
+            y: One-dimensional array of y-coordinates.
+            color: Line color.
+        """
         self.lines.append(Line(label, x, y, color))
 
     def peaks(self, x: np.ndarray, y: np.ndarray, color: Color = "#bb0000", label: str = "peaks") -> None:
+        """Adds a labeled set of peaks to this analysis result.
+
+        Args:
+            x: One-dimensional array of peak x-coordinates.
+            y: One-dimensional array of peak y-coordinates.
+            color: Point color.
+            label: Text label for the peak set.
+        """
         self.peak_sets.append(PeakSet(x, y, color, label))
 
     @staticmethod

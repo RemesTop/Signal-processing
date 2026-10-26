@@ -11,10 +11,12 @@ def plot_signal(plot_widget, result: AnalysisResult):
     if plot_item.legend is None:
         plot_item.addLegend()
 
+    # Plot all lines as lines (obviously)
     for trace in result.lines:
         plot_widget.plot(trace.x, trace.y,
                          pen=pg.mkPen(trace.color, width=1),
                          name=trace.label)
+    # Plot all peaks as points
     for peak_set in result.peak_sets:
         plot_widget.plot(peak_set.x, peak_set.y,
                          pen=None,
