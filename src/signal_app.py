@@ -5,7 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-    QLineEdit, QComboBox, QPushButton, QSpinBox, QFileDialog
+    QLineEdit, QComboBox, QPushButton, QSpinBox, QFileDialog, QCheckBox
 )
 from PySide6.QtCore import QSettings
 import pyqtgraph as pg
@@ -40,8 +40,12 @@ class SignalApp(QWidget):
         self.factor_input.setRange(1, 100000)
         self.factor_input.setValue(5)
 
-        # 4. Visualize Data button (When the button is pressed)
-        self.btn = QPushButton("Visualize Data")
+        # 4. Checkbox for enabling peak detection
+        self.peaks_checkbox = QCheckBox("Detect peaks")
+        self.peaks_checkbox.setChecked(True)
+
+        # 5. Visualize Data button (When the button is pressed)
+        self.btn = QPushButton("Run")
         self.btn.clicked.connect(self.visualize)
 
         # Plot widget
@@ -58,6 +62,7 @@ class SignalApp(QWidget):
         top_layout.addWidget(self.browse_btn)
         top_layout.addWidget(self.combo)
         top_layout.addWidget(self.factor_input)
+        top_layout.addWidget(self.peaks_checkbox)
         top_layout.addWidget(self.btn)
 
         layout = QVBoxLayout(self)
@@ -79,10 +84,14 @@ class SignalApp(QWidget):
         saved_factor = self.settings.value("downsample_factor", 2)
         self.factor_input.setValue(int(saved_factor))
 
+        saved_peaks = self.settings.value("detect_peaks", True, type=bool)
+        self.peaks_checkbox.setChecked(saved_peaks)
+
     def save_settings(self):
         self.settings.setValue("file_path", self.file_input.text())
         self.settings.setValue("downsample_method", self.combo.currentText())
         self.settings.setValue("downsample_factor", self.factor_input.value())
+        self.settings.setValue("detect_peaks", self.peaks_checkbox.isChecked())
         self.settings.sync()
 
     def closeEvent(self, event):
@@ -124,12 +133,15 @@ class SignalApp(QWidget):
         method = self.combo.currentText()
         factor = self.factor_input.value()
         
-        signal_slice = self.reader.get_slice(0, 5, downsample_factor=factor, downsample=method)
+        # Get full slice from the data
+        total_duration = self.reader.total_samples / self.reader.sample_rate
+        signal_slice = self.reader.get_slice(0, total_duration, downsample_factor=factor, downsample=method)
         
-        # TODO signal analysis functions can be added here
-        # result = AnalysisResult.line_from_slice(signal_slice)
-        result = AnalysisResult(signal_slice)
-        raw_signal_with_peaks(signal_slice, result, factor)
+        if self.peaks_checkbox.isChecked():
+            result = AnalysisResult(signal_slice)
+            raw_signal_with_peaks(signal_slice, result, factor)
+        else:
+            result = AnalysisResult.line_from_slice(signal_slice)
         
         plot_signal(self.plot_widget, result)
         self.plot_widget.setTitle(f"Points: {len(signal_slice.time)}, Downsampling method: {method}")

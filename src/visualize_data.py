@@ -29,7 +29,7 @@ if __name__ == "__main__":
 
     # Manually set file path
     reader = SignalReader("data/IDP_signal_example_[sami_dmitry_september2023].csv")
-    signal_slice = reader.get_slice(0, 5, downsample_factor=5)
+    signal_slice = reader.get_slice(0, 30, downsample_factor=5)
     result = AnalysisResult.line_from_slice(signal_slice)
 
     win = pg.plot(title="Signal Visualizer test")
