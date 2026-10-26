@@ -41,7 +41,34 @@ def butterworth_lowpass_filter(
 # -------------------------------------------------- Analysis functions
 
 
-def raw_signal_with_peaks(s: Slice, out: AnalysisResult, downsample_factor: int):
+def example_analysis(s: Slice, out: AnalysisResult):
+    """Example of a signal analysis function. Returns the unprocessed signal
+    and peaks at points 10, 50 and 100.
+
+    **Line:**<br>
+    Unprocessed.
+
+    **Peaks:**<br>
+    `scipy.signal.find_peaks` with a 5 ms minimum peak distance and 40 prominence.
+    """
+    # Loop through channels (columns) of the signal
+    for ch in range(s.channels):
+        y = s.data[:, ch]
+        
+        # Add line where
+        # - the x value of each point is the time
+        # - the y value of each point is the amplitude of the signal in this channel
+        out.line(s.time, y,
+                 f"Channel {ch + 1}", color=ch)
+        
+        # Example of the indices of found peaks
+        idx = (10, 50, 100)
+        # Add peaks, which is just taking the values of the line definition above at the peak indices
+        out.peaks(s.time[idx], y[idx],
+                  f"Channel {ch + 1} peaks")
+
+
+def raw_signal_with_peaks(s: Slice, out: AnalysisResult, downsample_factor: int = 1):
     """Basic peak detection without pre-processing. Specify the factor of any
     downsampling that has already been done.
 
@@ -57,15 +84,15 @@ def raw_signal_with_peaks(s: Slice, out: AnalysisResult, downsample_factor: int)
         x = s.data[:, ch]
         
         # Create line
-        out.line(f"channel {ch + 1}", s.time, x, color=ch)
+        out.line(s.time, x,
+                 f"Channel {ch + 1}", color=ch)
         
         # Find peaks
         idx, properties = find_peaks(x, distance=min_distance, prominence=40)
         out.peaks(s.time[idx], x[idx],
-                  label=f"channel {ch + 1} peaks")
+                  f"Channel {ch + 1} peaks")
 
 
-# TODO never do any downsampling before calling the following functions
 def scipy_decimation(s: Slice, out: AnalysisResult):
     """SciPy's decimation and peak finding. Don't downsample the signal
     before passing to this function.
@@ -87,16 +114,18 @@ def scipy_decimation(s: Slice, out: AnalysisResult):
         # x = downsample(x, downsample_factor)
         
         # Create line
-        out.line(f"channel {ch + 1}", time, x, color=ch)
+        out.line(time, x,
+                 f"Channel {ch + 1}", color=ch)
         
         # Find peaks
         idx, properties = find_peaks(x, distance=min_distance, prominence=40)
         out.peaks(time[idx], x[idx],
-                  label=f"channel {ch + 1} peaks")
+                  f"Channel {ch + 1} peaks")
 
 
 def custom_decimation(s: Slice, out: AnalysisResult):
     """Low-pass filter and downsample, then SciPy peak finding.
+    Don't downsample the signal before passing to this function.
 
     **Line:**<br>
     Downsampled by a factor of 10 using `butterworth_lowpass_filter` and
@@ -121,16 +150,18 @@ def custom_decimation(s: Slice, out: AnalysisResult):
         time = s.time[::decimation_factor]
         x = downsample(x, decimation_factor)
         
-        out.line(f"channel {ch + 1}", time, x, color=ch)
+        out.line(time, x,
+                 f"Channel {ch + 1}", color=ch)
         
         # Find peaks
         idx, properties = find_peaks(x, distance=min_distance, prominence=40)
         out.peaks(time[idx], x[idx],
-                  label=f"channel {ch + 1} peaks")
+                  f"Channel {ch + 1} peaks")
 
 
 def extra_lowpass(s: Slice, out: AnalysisResult):
     """`custom_decimation` with an added low-pass filter after downsampling.
+    Don't downsample the signal before passing to this function.
 
     **Line:**<br>
     Downsampled by a factor of 10 using `butterworth_lowpass_filter` and
@@ -163,12 +194,13 @@ def extra_lowpass(s: Slice, out: AnalysisResult):
             fs=s.sample_rate / decimation_factor
         )
         
-        out.line(f"channel {ch + 1}", time, x, color=ch)
+        out.line(time, x,
+                 f"Channel {ch + 1}", color=ch)
         
         # Find peaks
         idx, properties = find_peaks(x, distance=min_distance, prominence=40)
         out.peaks(time[idx], x[idx],
-                  label=f"channel {ch + 1} peaks")
+                  f"Channel {ch + 1} peaks")
 
 
 

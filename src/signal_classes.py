@@ -44,49 +44,58 @@ Color = int | tuple | str | QColor
 """pyqtgraph integer, tuple or string color"""
 
 
+# Currently Line and PeakSet are redundantly the same, but maybe
+# they can have some additional, distinct attributes later
 @dataclass(frozen=True)
 class Line:
-    label: str
+    """A graphed line with x and y points, a label, and a color."""
     x: np.ndarray
     y: np.ndarray
+    label: str
     color: Color
 
 
 @dataclass(frozen=True)
 class PeakSet:
+    """A graphed set of points with x and y locations, a label, and a color."""
     x: np.ndarray
     y: np.ndarray
-    color: Color
     label: str
+    color: Color
 
 
 @dataclass
 class AnalysisResult:
+    """Correlates a signal slice with multiple graphed lines and peak sets."""
     slice: Slice
-    lines: list[Line]         = field(default_factory=list)
+    lines: list[Line]           = field(default_factory=list)
     peak_sets: list[PeakSet]    = field(default_factory=list)
 
-    def line(self, label: str, x: np.ndarray, y: np.ndarray, color: Color = 0) -> None:
-        """Adds a labeled line to this analysis result.
+    def line(self, x: np.ndarray, y: np.ndarray, label: str, color: Color = 0) -> None:
+        """Adds a line to this analysis result. Using the same label for multiple
+        slices allows the lines to connect when showing a graph.
 
         Args:
-            label: Text label for the line.
             x: One-dimensional array of x-coordinates.
             y: One-dimensional array of y-coordinates.
+            label: Text label for the line.
             color: Line color.
         """
-        self.lines.append(Line(label, x, y, color))
+        self.lines.append(Line(x, y, label, color))
 
-    def peaks(self, x: np.ndarray, y: np.ndarray, color: Color = "#bb0000", label: str = "peaks") -> None:
-        """Adds a labeled set of peaks to this analysis result.
+    # It might be more convenient if this didn't need the y parameter and just took the y values for graphing
+    # from the line that's defined to correspond to these peaks. 
+    def peaks(self, x: np.ndarray, y: np.ndarray, label: str = "peaks", color: Color = "#bb0000") -> None:
+        """Adds a set of peaks to this analysis result. Using the same label for multiple
+        slices allows the lines to connect when showing a graph.
 
         Args:
             x: One-dimensional array of peak x-coordinates.
             y: One-dimensional array of peak y-coordinates.
-            color: Point color.
             label: Text label for the peak set.
+            color: Point color.
         """
-        self.peak_sets.append(PeakSet(x, y, color, label))
+        self.peak_sets.append(PeakSet(x, y, label, color))
 
     @staticmethod
     def line_from_slice(slice: Slice):
