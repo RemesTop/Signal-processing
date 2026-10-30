@@ -99,6 +99,10 @@ class AnalysisResult:
 
     @staticmethod
     def line_from_slice(slice: Slice):
+        """Convenience method for creating an AnalysisResult from a slice without doing anything
+        to the slice or finding any peaks. The AnalysisResult contains the slice as lines for each
+        channel.
+        """
         result = AnalysisResult(slice)
         for channel in range(slice.channels):
             result.line(f"Channel {channel + 1}", slice.time, slice.data[:, channel], color=channel)
