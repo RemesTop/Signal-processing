@@ -52,3 +52,11 @@ After launching the application you can
 4. Click "Visualize Data" to run the signal analysis and show the results.
 
 The graph will now display the signal in a time-amplitude graph. Found peaks are displayed as circles on the graph.
+
+### Editing the signal processing and peak finding
+
+Check "View" > "Analysis parameters window" to edit the parameters that are currently used for processing the signal and finding peaks. The values of the parameters can be `None` for no value or the default value, simple numerical values, calculations, or a tuple like `(10, None)` or `(-5, 5)` for the parameters that support that. Click "Apply" to re-process the current signal and update the graph.
+
+If you set the "distance" field to `None`, most signal analysis functions currently will use a minimum distance of 5 milliseconds between peaks (adjusted for the decimation/downsampling).
+
+The signal processing functions run by the app are configured in `src/signal_app.py` in `ACTIVE_ANALYSES`. Add or remove entries from `peak_finder.ANALYSIS_FUNCTIONS` to run a different analysis or several at once. Each analysis function's editable parameters and their defaults are defined alongside the functions in `src/peak_finder.py`.
