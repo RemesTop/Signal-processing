@@ -1,11 +1,23 @@
 import numpy as np
 from pathlib import Path
+from PySide6.QtCore import QObject, Signal, QThreadPool
 from signal_converter import SignalConverter
+from worker import Worker
+
+import downsampler
+from signal_constants import DEFAULT_SAMPLE_RATE
+from signal_classes import Slice
 
 # A class to read .dat binary files by slices and downsample them for easier usage
-class SignalReader:
-    def __init__(self, file_path, sample_rate=50000):
+class SignalReader(QObject):
+    ready = Signal()
+    progress = Signal(float)
+
+    def __init__(self, file_path, sample_rate=DEFAULT_SAMPLE_RATE, multithreading=False):
+        super().__init__()
         self.sample_rate = sample_rate
+        self.data = None
+        self.total_samples = 0
         file_path = Path(file_path)
 
         # If given a CSV file, check for cached .dat or convert it
@@ -13,11 +25,36 @@ class SignalReader:
             self.dat_path = file_path.with_suffix(".dat")
             if not self.dat_path.exists():
                 print(f"Converting {file_path.name} to binary (.dat).. This is done once.")
-                converter = SignalConverter()
-                converter.start(file_path, self.dat_path)
+                self.converter = SignalConverter()
+                self.tmp_path = self.dat_path.with_suffix(".tmp")
+
+                # If multithreading is enabled, run conversion in the background
+                if multithreading:
+                    worker = Worker(
+                        self.converter.start,
+                        source_signal_path=file_path,
+                        target_signal_path=self.tmp_path
+                    )
+                    worker.signals.progress.connect(self.progress.emit)
+                    worker.signals.result.connect(self.on_conversion_finished)
+                    QThreadPool.globalInstance().start(worker)
+                    return
+                else:
+                    # Otherwise convert directly (blocks until done)
+                    self.converter.start(file_path, self.tmp_path)
+                    self.tmp_path.replace(self.dat_path)
         else:
             self.dat_path = file_path
 
+        self._init_memmap()
+
+    def on_conversion_finished(self, success):
+        # Called when background worker finishes
+        if success and self.tmp_path.exists():
+            self.tmp_path.replace(self.dat_path)
+            self._init_memmap()
+
+    def _init_memmap(self):
         # Calculate row count from file size (For 2 channels = 4 bytes per row)
         file_bytes = self.dat_path.stat().st_size
         self.total_samples = file_bytes // 4
@@ -29,46 +66,32 @@ class SignalReader:
             mode="r",
             shape=(self.total_samples, 2)
         )
+        self.ready.emit()
 
-    # Get a slice of the signal, downsampled with minmax by default
-    # max_points dictates the amount of downsampling. Higher value: more downsampling, more inaccurate
-    def get_slice(self, start_sec, end_sec, max_points=5, downsample="decimation"):
+    def _downsample(self, raw_slice, downsample_factor, downsample):
+        return downsampler.downsample(raw_slice, downsample_factor, method=downsample)
+
+    # Get a slice of the signal, raw by default (downsampling can be optionally enabled)
+    # downsample_factor dictates how many times smaller the data will be. Higher value: more downsampling, more inaccurate
+    def get_slice(self, start_sec, end_sec, downsample_factor=1, downsample=None) -> Slice:
+        # If data is not ready (e.g. conversion still running), return empty arrays
+        if self.data is None:
+            return Slice(np.array([]), np.empty((0, 2), dtype=np.int16))
+
         start_idx = max(0, int(start_sec * self.sample_rate))
         end_idx = min(self.total_samples, int(end_sec * self.sample_rate))
 
         raw_slice = self.data[start_idx:end_idx]
         total = len(raw_slice)
 
-        # If the slice is already small enough, no downsampling needed
-        # OR if downsample mode is set to none, return raw data
-        if total <= max_points or downsample == "none":
+        # If no downsampling requested or factor <= 1, return raw data
+        if downsample in (None, "none") or downsample_factor <= 1 or total <= downsample_factor:
             time_axis = np.linspace(start_sec, end_sec, total)
-            return time_axis, raw_slice
+            return Slice(time_axis, raw_slice)
 
-        if downsample == "minmax":
-            # Min-max: split into buckets and find min and max values for each
-            n_buckets = max_points // 2
-            bucket_size = total // n_buckets
-
-            trimmed = raw_slice[:n_buckets * bucket_size]
-            reshaped = trimmed.reshape(n_buckets, bucket_size, 2)
-
-            mins = reshaped.min(axis=1)
-            maxs = reshaped.max(axis=1)
-
-            # Interleave min and max so the line goes up and down
-            #e.g.
-            # Line values: min max min max min max min max
-            downsampled = np.empty((n_buckets * 2, 2), dtype=raw_slice.dtype)
-            downsampled[0::2] = mins
-            downsampled[1::2] = maxs
-        elif downsample == "decimation":
-            # Another option for downsampling
-            # Decimation: just take every Nth point. May lose important spikes
-            step = total // max_points
-            downsampled = raw_slice[::step]
+        downsampled = self._downsample(raw_slice, downsample_factor, downsample)
 
         # Create time axis based on start/end and amount of points
         # Can be used for reading samples or working with matplotlib
         time_axis = np.linspace(start_sec, end_sec, len(downsampled))
-        return time_axis, downsampled
+        return Slice(time_axis, downsampled)

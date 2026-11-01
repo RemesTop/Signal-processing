@@ -1,26 +1,26 @@
 # Signal Processing
 
-This is a python project intended for the course Industrial Project 2026
+This is a signal processing and peak detection GUI application written in Python for the Industrial Project 2026 course.
 
-## How to use
+## How to run the application
 
-- Create a folder named "data" at root
-- Place signal csv data into the "data" folder
-- Open terminal and create a virtual environment
-- Install requirements if needed
-- Run scripts (With venv)
+1. Create a folder named "data" at root
+2. Place signal csv data into the "data" folder
+3. Open terminal and create a virtual environment
+4. Install requirements if needed
+5. Run scripts (With venv)
 
-## Requirements
+### Requirements
 
-Listed inside requirements.txt
+Listed inside `requirements.txt`.
 
 You can install all requirements with venv:
 
-## Use a virtual environment
+### Use a virtual environment
 
-- Create a virtual environment in the project root
-- Activate it
-- Install the project requirements
+1. Create a virtual environment in the project root
+2. Activate it
+3. Install the project requirements
 
 Example:
 
@@ -37,3 +37,18 @@ python read_data.py
 ```
 
 The venv is used to keep the project packages separate from the rest of the Python installation on your computer.
+
+## Using the application
+
+After launching the application you can
+
+1. Select a `.csv` or `.dat` signal file to read using the "Browse" button.
+2. Choose a downsampling method and factor.
+   - "Decimation" with a factor of n only uses one in every n values of the signal.
+   - "Max points" with a factor of n uses the maximum value in every n values of the signal.
+   - Selecting "None" or setting the factor to 1 does no downsampling.
+3. Check "Detect peaks" to run peak detection on the signal.
+   - Skipping peak detection displays the signal slightly faster.
+4. Click "Visualize Data" to run the signal analysis and show the results.
+
+The graph will now display the signal in a time-amplitude graph. Found peaks are displayed as circles on the graph.

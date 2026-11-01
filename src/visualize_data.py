@@ -1,23 +1,44 @@
-# import pyqtgraph as pg
+import sys
+from PySide6.QtWidgets import QApplication
+import pyqtgraph as pg
 from signal_reader import SignalReader
-import matplotlib.pyplot as plt
-from scipy.signal import find_peaks
-reader = SignalReader("data/5. suction_HIGH_CONC_1ml_and_no_resuction.csv")
-time, signal = reader.get_slice(0, 70, max_points=500, use_minmax=False)        
 
-print(signal.shape)
+from signal_classes import AnalysisResult
 
+def plot_signal(plot_widget, result: AnalysisResult):
+    plot_widget.clear()
+    plot_item = plot_widget.getPlotItem()
+    if plot_item.legend is None:
+        plot_item.addLegend()
 
+    # Plot all lines as lines (obviously)
+    for trace in result.lines:
+        plot_widget.plot(trace.x, trace.y,
+                         pen=pg.mkPen(trace.color, width=1),
+                         name=trace.label)
+    # Plot all peaks as points
+    for peak_set in result.peak_sets:
+        plot_widget.plot(peak_set.x, peak_set.y,
+                         pen=None,
+                         symbol="o",
+                         symbolBrush=pg.mkBrush(peak_set.color), symbolPen=pg.mkPen(peak_set.color),
+                         symbolSize=6,
+                         name=peak_set.label)
 
-# Detect peaks in real-time
-window_size = 2000
-threshold = 30
-peaks = find_peaks(signal[:, 1], height=threshold, distance=window_size)[1]
+# Main method for testing the visualizer only
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
 
-print(peaks)
+    # Manually set file path
+    reader = SignalReader("data/IDP_signal_example_[sami_dmitry_september2023].csv")
+    signal_slice = reader.get_slice(0, 30, downsample_factor=5)
+    result = AnalysisResult.line_from_slice(signal_slice)
 
-plt.plot(time, signal[:, 1], label='Signal')
-plt.title('Signal with Detected Peaks')
-plt.xlabel('Time')
-plt.ylabel('Signal')
-plt.show()
+    win = pg.plot(title="Signal Visualizer test")
+    win.showGrid(x=True, y=True)
+    win.setLabel("bottom", "Time", units="s")
+    win.setLabel("left", "Amplitude")
+
+    plot_signal(win, result)
+
+    sys.exit(app.exec())
