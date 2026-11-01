@@ -4,15 +4,23 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-    QLineEdit, QComboBox, QPushButton, QSpinBox, QFileDialog, QCheckBox
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QComboBox,
+    QPushButton, QSpinBox, QFileDialog, QCheckBox, QMenuBar, QMessageBox
 )
 from PySide6.QtCore import QSettings
 import pyqtgraph as pg
 from signal_reader import SignalReader
 from visualize_data import plot_signal
-from signal_classes import AnalysisResult
-from peak_finder import raw_signal_with_peaks
+from signal_classes import AnalysisResult, Slice
+from analysis_parameters_dialog import AnalysisParametersDialog
+from peak_finder import ANALYSIS_FUNCTIONS, AnalysisFunction
+
+
+# Analysis functions that are currently run for each slice
+ACTIVE_ANALYSES: tuple[AnalysisFunction, ...] = (
+    ANALYSIS_FUNCTIONS["Custom decimation"],
+)
+
 
 # Main app window for the project
 class SignalApp(QWidget):
@@ -24,6 +32,25 @@ class SignalApp(QWidget):
         # Options are saved to settings.ini and persist when restarting the app
         settings_file = Path(__file__).resolve().parent / "settings.ini"
         self.settings = QSettings(str(settings_file), QSettings.IniFormat)
+
+        # Analysis functions that are run for each slice
+        self.active_analyses = ACTIVE_ANALYSES
+        # Editable parameters for each analysis function
+        self.analysis_parameters = {analysis.key: analysis.defaults for analysis in self.active_analyses}
+        # Dialog for editing the parameters
+        self.parameters_dialog = AnalysisParametersDialog(self.active_analyses, self)
+        self.parameters_dialog.changes_applied.connect(self.apply_analysis_parameters)
+        self.parameters_dialog.closed.connect(lambda: self.action_param_window.setChecked(False))
+
+
+        # Menu bar
+        self.menu_bar = QMenuBar()
+        view_menu = self.menu_bar.addMenu("View")
+        self.action_param_window = view_menu.addAction("Analysis parameters window")
+        self.action_param_window.setCheckable(True)
+        self.action_param_window.setChecked(False)
+        self.action_param_window.toggled.connect(self.parameters_dialog.setVisible)
+        
 
         # 1. Text input for file path and browse button
         self.file_input = QLineEdit()
@@ -66,6 +93,7 @@ class SignalApp(QWidget):
         top_layout.addWidget(self.btn)
 
         layout = QVBoxLayout(self)
+        layout.setMenuBar(self.menu_bar)
         layout.addLayout(top_layout)
         layout.addWidget(self.plot_widget)
 
@@ -138,15 +166,40 @@ class SignalApp(QWidget):
         signal_slice = self.reader.get_slice(0, total_duration, downsample_factor=factor, downsample=method)
         
         if self.peaks_checkbox.isChecked():
-            result = AnalysisResult(signal_slice)
-            raw_signal_with_peaks(signal_slice, result, factor)
+            # Do signal analysis using all the active functions
+            try:
+                result = AnalysisResult(signal_slice)
+                for analysis in self.active_analyses:
+                    analysis.function(
+                        signal_slice,
+                        result,
+                        **analysis.parameters_for_call(self.analysis_parameters[analysis.key])
+                    )
+            except Exception as exc:
+                QMessageBox.critical(self, "Error in signal analysis", f"{type(exc).__name__}: {exc}")
+                self.btn.setEnabled(True)
+                return
+            
+            # This displaying of names can maybe be replaced with just labels in the graph or multiple graphs
+            analysis_names = ", ".join(analysis.title for analysis in self.active_analyses)
+            self.plot_widget.setTitle(f"Points: {len(result.lines[0].x) if result.lines else 0}, Functions: {analysis_names}")
+            # Show the parameter editing dialog
+            self.action_param_window.setChecked(True)
         else:
             result = AnalysisResult.line_from_slice(signal_slice)
+            
+            self.plot_widget.setTitle(f"Points: {len(signal_slice.time)}, Downsampling method: {method}")
         
         plot_signal(self.plot_widget, result)
-        self.plot_widget.setTitle(f"Points: {len(signal_slice.time)}, Downsampling method: {method}")
         self.btn.setEnabled(True)
 
+    def apply_analysis_parameters(self, parameters: dict[str, dict]):
+        """Apply the provided parameters to all the active analyses and run `plot_data`."""
+        self.analysis_parameters = {
+            analysis.key: dict(parameters.get(analysis.key, analysis.defaults))
+            for analysis in self.active_analyses
+        }
+        self.plot_data()
 
 def main():
     app = QApplication(sys.argv)
