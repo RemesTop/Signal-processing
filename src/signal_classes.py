@@ -105,5 +105,5 @@ class AnalysisResult:
         """
         result = AnalysisResult(slice)
         for channel in range(slice.channels):
-            result.line(f"Channel {channel + 1}", slice.time, slice.data[:, channel], color=channel)
+            result.line(slice.time, slice.data[:, channel], label=f"Channel {channel + 1}", color=channel)
         return result
