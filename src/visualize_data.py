@@ -5,24 +5,24 @@ from signal_reader import SignalReader
 
 from signal_classes import AnalysisResult
 
-def plot_signal(plot_widget, result: AnalysisResult):
+def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
     plot_widget.clear()
     plot_item = plot_widget.getPlotItem()
     if plot_item.legend is None:
         plot_item.addLegend()
 
     # Plot all lines as lines (obviously)
-    for trace in result.lines:
-        plot_widget.plot(trace.x, trace.y,
-                         pen=pg.mkPen(trace.color, width=1),
-                         name=trace.label)
+    for line in result.lines:
+        plot_widget.plot(line.x, line.y,
+                         pen=pg.mkPen(line.color, width=1),
+                         name=line.label)
     # Plot all peaks as points
     for peak_set in result.peak_sets:
         plot_widget.plot(peak_set.x, peak_set.y,
                          pen=None,
                          symbol="o",
-                         symbolBrush=pg.mkBrush(peak_set.color), symbolPen=pg.mkPen(peak_set.color),
-                         symbolSize=6,
+                         symbolBrush=pg.mkBrush(None), symbolPen=pg.mkPen(peak_set.color, width=1.5),
+                         symbolSize=7,
                          name=peak_set.label)
 
 # Main method for testing the visualizer only
