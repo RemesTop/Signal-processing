@@ -67,9 +67,11 @@ class SignalApp(QWidget):
         self.factor_input.setRange(1, 100000)
         self.factor_input.setValue(5)
 
-        # 4. Checkbox for enabling peak detection
-        self.peaks_checkbox = QCheckBox("Detect peaks")
-        self.peaks_checkbox.setChecked(True)
+        # 4. Dropdown for channel selection (restricting channels improves performance)
+        self.channel_combo = QComboBox()
+        self.channel_combo.addItems(["Both channels", "Channel 1", "Channel 2"])
+        self.channel_combo.setCurrentText("Both channels")
+        self.channel_combo.currentIndexChanged.connect(self.on_channel_changed)
 
         # 5. Visualize Data button (When the button is pressed)
         self.btn = QPushButton("Run")
@@ -89,7 +91,7 @@ class SignalApp(QWidget):
         top_layout.addWidget(self.browse_btn)
         top_layout.addWidget(self.combo)
         top_layout.addWidget(self.factor_input)
-        top_layout.addWidget(self.peaks_checkbox)
+        top_layout.addWidget(self.channel_combo)
         top_layout.addWidget(self.btn)
 
         layout = QVBoxLayout(self)
@@ -112,15 +114,22 @@ class SignalApp(QWidget):
         saved_factor = self.settings.value("downsample_factor", 2)
         self.factor_input.setValue(int(saved_factor))
 
-        saved_peaks = self.settings.value("detect_peaks", True, type=bool)
-        self.peaks_checkbox.setChecked(saved_peaks)
+        saved_channel = self.settings.value("channel_selection", "Both channels")
+        if saved_channel in ["Both channels", "Channel 1", "Channel 2"]:
+            self.channel_combo.setCurrentText(str(saved_channel))
+        else:
+            self.channel_combo.setCurrentText("Both channels")
 
     def save_settings(self):
         self.settings.setValue("file_path", self.file_input.text())
         self.settings.setValue("downsample_method", self.combo.currentText())
         self.settings.setValue("downsample_factor", self.factor_input.value())
-        self.settings.setValue("detect_peaks", self.peaks_checkbox.isChecked())
+        self.settings.setValue("channel_selection", self.channel_combo.currentText())
         self.settings.sync()
+
+    def on_channel_changed(self):
+        if hasattr(self, "reader") and self.reader is not None and self.reader.data is not None:
+            self.plot_data()
 
     def closeEvent(self, event):
         self.save_settings()
@@ -160,35 +169,42 @@ class SignalApp(QWidget):
     def plot_data(self):
         method = self.combo.currentText()
         factor = self.factor_input.value()
+        channel_choice = self.channel_combo.currentText()
         
         # Get full slice from the data
         total_duration = self.reader.total_samples / self.reader.sample_rate
         signal_slice = self.reader.get_slice(0, total_duration, downsample_factor=factor, downsample=method)
         
-        if self.peaks_checkbox.isChecked():
-            # Do signal analysis using all the active functions
-            try:
-                result = AnalysisResult(signal_slice)
-                for analysis in self.active_analyses:
-                    analysis.function(
-                        signal_slice,
-                        result,
-                        **analysis.parameters_for_call(self.analysis_parameters[analysis.key])
-                    )
-            except Exception as exc:
-                QMessageBox.critical(self, "Error in signal analysis", f"{type(exc).__name__}: {exc}")
-                self.btn.setEnabled(True)
-                return
-            
-            # This displaying of names can maybe be replaced with just labels in the graph or multiple graphs
-            analysis_names = ", ".join(analysis.title for analysis in self.active_analyses)
-            self.plot_widget.setTitle(f"Points: {len(result.lines[0].x) if result.lines else 0}, Functions: {analysis_names}")
-            # Show the parameter editing dialog
-            self.action_param_window.setChecked(True)
+        # Restrict processing to the chosen channel (or both) to optimize performance
+        if channel_choice == "Channel 1":
+            channel_indices = (0,)
+        elif channel_choice == "Channel 2":
+            channel_indices = (1,)
         else:
-            result = AnalysisResult.line_from_slice(signal_slice)
-            
-            self.plot_widget.setTitle(f"Points: {len(signal_slice.time)}, Downsampling method: {method}")
+            channel_indices = (0, 1)
+
+        signal_slice = Slice(signal_slice.time, signal_slice.data, channel_indices=channel_indices)
+        
+        # Do signal analysis using all the active functions
+        try:
+            result = AnalysisResult(signal_slice)
+            for analysis in self.active_analyses:
+                analysis.function(
+                    signal_slice,
+                    result,
+                    **analysis.parameters_for_call(self.analysis_parameters[analysis.key])
+                )
+        except Exception as exc:
+            QMessageBox.critical(self, "Error in signal analysis", f"{type(exc).__name__}: {exc}")
+            self.btn.setEnabled(True)
+            return
+        
+        # This displaying of names can maybe be replaced with just labels in the graph or multiple graphs
+        analysis_names = ", ".join(analysis.title for analysis in self.active_analyses)
+        points_count = len(result.lines[0].x) if result.lines else 0
+        self.plot_widget.setTitle(f"Points: {points_count}, Functions: {analysis_names}")
+        # Show the parameter editing dialog
+        self.action_param_window.setChecked(True)
         
         plot_signal(self.plot_widget, result)
         self.btn.setEnabled(True)

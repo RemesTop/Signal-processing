@@ -160,7 +160,8 @@ def example_analysis(s: Slice, out: AnalysisResult):
     `scipy.signal.find_peaks` with a 5 ms minimum peak distance and 40 prominence.
     """
     # Loop through channels (columns) of the signal
-    for ch in range(s.channels):
+    # Filter and detect peaks only for requested channel(s) to optimize performance
+    for ch in s.channel_indices:
         y = s.data[:, ch]
         
         # Add line where
@@ -202,7 +203,8 @@ def raw_signal_with_peaks(s: Slice, out: AnalysisResult,
     peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate) / used_downsample_factor))
     peak_options.setdefault("prominence", 40)
 
-    for ch in range(s.channels):
+    # Filter and detect peaks only for requested channel(s) to optimize performance
+    for ch in s.channel_indices:
         x = s.data[:, ch]
         
         # Create line
@@ -236,7 +238,8 @@ def scipy_decimation(s: Slice, out: AnalysisResult,
     peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate) / decimation_factor))
     peak_options.setdefault("prominence", 40)
     
-    for ch in range(s.channels):
+    # Filter and detect peaks only for requested channel(s) to optimize performance
+    for ch in s.channel_indices:
         x = s.data[:, ch]
         
         time = s.time[::decimation_factor]
@@ -275,7 +278,8 @@ def custom_decimation(s: Slice, out: AnalysisResult,
     peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate) / decimation_factor))
     peak_options.setdefault("prominence", 40)
     
-    for ch in range(s.channels):
+    # Filter and detect peaks only for requested channel(s) to optimize performance
+    for ch in s.channel_indices:
         x = s.data[:, ch]
         
         x = butterworth_lowpass_filter(
@@ -321,7 +325,8 @@ def extra_lowpass(s: Slice, out: AnalysisResult,
     peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate) / decimation_factor))
     peak_options.setdefault("prominence", 40)
     
-    for ch in range(s.channels):
+    # Filter and detect peaks only for requested channel(s) to optimize performance
+    for ch in s.channel_indices:
         x = s.data[:, ch]
         
         x = butterworth_lowpass_filter(

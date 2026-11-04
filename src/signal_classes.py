@@ -11,6 +11,8 @@ class Slice:
     """In seconds, shape: (n,)"""
     data: np.ndarray
     """Shape: (n, channels)"""
+    channel_indices: tuple[int, ...] | None = None
+    # Indices of channels to analyze/plot (allows isolating a single channel for performance)
 
     def __post_init__(self):
         time = np.asarray(self.time)
@@ -23,6 +25,9 @@ class Slice:
             raise ValueError("time and data must contain the same number of samples")
         object.__setattr__(self, "time", time)
         object.__setattr__(self, "data", data)
+        # Default to all channels when not explicitly restricted
+        if self.channel_indices is None:
+            object.__setattr__(self, "channel_indices", tuple(range(data.shape[1])))
 
     def __iter__(self) -> Iterator[np.ndarray]:
         """Iterate the slice as (time, data)."""
@@ -104,6 +109,6 @@ class AnalysisResult:
         channel.
         """
         result = AnalysisResult(slice)
-        for channel in range(slice.channels):
+        for channel in slice.channel_indices:
             result.line(slice.time, slice.data[:, channel], label=f"Channel {channel + 1}", color=channel)
         return result

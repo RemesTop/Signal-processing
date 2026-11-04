@@ -10,6 +10,8 @@ def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
     plot_item = plot_widget.getPlotItem()
     if plot_item.legend is None:
         plot_item.addLegend()
+    else:
+        plot_item.legend.clear()
 
     # Plot all lines as lines (obviously)
     for line in result.lines:
@@ -24,6 +26,9 @@ def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
                          symbolBrush=pg.mkBrush(None), symbolPen=pg.mkPen(peak_set.color, width=1.5),
                          symbolSize=7,
                          name=peak_set.label)
+
+    # Center and fit the graph view to the currently plotted channel(s)
+    plot_widget.autoRange()
 
 # Main method for testing the visualizer only
 if __name__ == "__main__":
