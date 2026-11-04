@@ -7,9 +7,10 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QComboBox,
     QPushButton, QSpinBox, QFileDialog, QCheckBox, QMenuBar, QMessageBox, QLabel
 )
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, QThreadPool
 import pyqtgraph as pg
 from signal_reader import SignalReader
+from worker import Worker
 from visualize_data import plot_signal
 from signal_classes import AnalysisResult, Slice
 from analysis_parameters_dialog import AnalysisParametersDialog
@@ -169,15 +170,11 @@ class SignalApp(QWidget):
     def update_progress(self, percent):
         self.plot_widget.setTitle(f"Converting csv to binary, please wait {percent:.0f}%")
 
-    def plot_data(self):
-        method = self.combo.currentText()
-        factor = self.factor_input.value()
-        channel_choice = self.channel_combo.currentText()
-        
-        # Get full slice from the data
+    def _run_analysis(self, method, factor, channel_choice, parameters):
+        # Background worker task: slices data and runs signal analysis
         total_duration = self.reader.total_samples / self.reader.sample_rate
         signal_slice = self.reader.get_slice(0, total_duration, downsample_factor=factor, downsample=method)
-        
+
         # Restrict processing to the chosen channel (or both) to optimize performance
         if channel_choice == "Channel 1":
             channel_indices = (0,)
@@ -187,22 +184,32 @@ class SignalApp(QWidget):
             channel_indices = (0, 1)
 
         signal_slice = Slice(signal_slice.time, signal_slice.data, channel_indices=channel_indices)
-        
-        # Do signal analysis using all the active functions
-        try:
-            result = AnalysisResult(signal_slice)
-            for analysis in self.active_analyses:
-                analysis.function(
-                    signal_slice,
-                    result,
-                    **analysis.parameters_for_call(self.analysis_parameters[analysis.key])
-                )
-        except Exception as exc:
-            self.peak_count_label.setText("Peaks: unavailable")
-            QMessageBox.critical(self, "Error in signal analysis", f"{type(exc).__name__}: {exc}")
-            self.btn.setEnabled(True)
-            return
 
+        result = AnalysisResult(signal_slice)
+        for analysis in self.active_analyses:
+            analysis.function(
+                signal_slice,
+                result,
+                **analysis.parameters_for_call(parameters[analysis.key])
+            )
+        return result
+
+    def plot_data(self):
+        method = self.combo.currentText()
+        factor = self.factor_input.value()
+        channel_choice = self.channel_combo.currentText()
+        parameters = self.analysis_parameters
+
+        self.btn.setEnabled(False)
+        self.plot_widget.setTitle("Analyzing signal, please wait...")
+
+        # Run the peak analysis in a background worker thread to keep GUI responsive
+        worker = Worker(self._run_analysis, method, factor, channel_choice, parameters)
+        worker.signals.result.connect(self._on_analysis_finished)
+        worker.signals.error.connect(self._on_analysis_error)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_analysis_finished(self, result):
         # Displays the number of detected peaks in the label 
         peak_count = sum(len(peak_set.x) for peak_set in result.peak_sets)
         self.peak_count_label.setText(f"Peaks: {peak_count}")
@@ -213,8 +220,13 @@ class SignalApp(QWidget):
         self.plot_widget.setTitle(f"Points: {points_count}, Functions: {analysis_names}")
         # Show the parameter editing dialog
         self.action_param_window.setChecked(True)
-        
+
         plot_signal(self.plot_widget, result)
+        self.btn.setEnabled(True)
+
+    def _on_analysis_error(self, err):
+        self.peak_count_label.setText("Peaks: unavailable")
+        QMessageBox.critical(self, "Error in signal analysis", f"{err[0].__name__}: {err[1]}")
         self.btn.setEnabled(True)
 
     def apply_analysis_parameters(self, parameters: dict[str, dict]):

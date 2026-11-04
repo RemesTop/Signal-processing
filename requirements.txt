@@ -1,6 +1,5 @@
 numpy
 pandas
-matplotlib
 PySide6
 pyqtgraph
 scipy

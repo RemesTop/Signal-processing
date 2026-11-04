@@ -8,6 +8,11 @@ from signal_classes import AnalysisResult
 def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
     plot_widget.clear()
     plot_item = plot_widget.getPlotItem()
+
+    # Clip to visible view and auto-downsample to screen resolution for performance
+    plot_item.setClipToView(True)
+    plot_item.setDownsampling(auto=True, mode="peak")
+
     if plot_item.legend is None:
         plot_item.addLegend()
     else:
@@ -29,6 +34,7 @@ def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
 
     # Center and fit the graph view to the currently plotted channel(s)
     plot_widget.autoRange()
+
 
 # Main method for testing the visualizer only
 if __name__ == "__main__":
