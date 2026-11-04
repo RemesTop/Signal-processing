@@ -251,10 +251,8 @@ class SignalApp(QWidget):
         See rebuild_checkboxes() for how checkboxes are built."""
     
         if self.result is None:
-            return
-        hidden_lines = {k for k, cb in self.line_checks.items() if not cb.isChecked()}
-        hidden_peaks = {k for k, cb in self.peak_checks.items() if not cb.isChecked()}
-        plot_signal(self.plot_widget, self.result, hidden_lines, hidden_peaks)
+            return    
+        plot_signal(self.plot_widget, self.result)
 
     def apply_analysis_parameters(self, parameters: dict[str, dict]):
         """Apply the provided parameters to all the active analyses and run `plot_data`."""
