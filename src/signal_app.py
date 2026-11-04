@@ -5,7 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QComboBox,
-    QPushButton, QSpinBox, QFileDialog, QCheckBox, QMenuBar, QMessageBox
+    QPushButton, QSpinBox, QFileDialog, QCheckBox, QMenuBar, QMessageBox, QLabel
 )
 from PySide6.QtCore import QSettings
 import pyqtgraph as pg
@@ -72,6 +72,8 @@ class SignalApp(QWidget):
         self.channel_combo.addItems(["Both channels", "Channel 1", "Channel 2"])
         self.channel_combo.setCurrentText("Both channels")
         self.channel_combo.currentIndexChanged.connect(self.on_channel_changed)
+        # Label to display the number of detected peaks
+        self.peak_count_label = QLabel("Peaks: not detected")
 
         # 5. Visualize Data button (When the button is pressed)
         self.btn = QPushButton("Run")
@@ -92,6 +94,7 @@ class SignalApp(QWidget):
         top_layout.addWidget(self.combo)
         top_layout.addWidget(self.factor_input)
         top_layout.addWidget(self.channel_combo)
+        top_layout.addWidget(self.peak_count_label)
         top_layout.addWidget(self.btn)
 
         layout = QVBoxLayout(self)
@@ -195,10 +198,15 @@ class SignalApp(QWidget):
                     **analysis.parameters_for_call(self.analysis_parameters[analysis.key])
                 )
         except Exception as exc:
+            self.peak_count_label.setText("Peaks: unavailable")
             QMessageBox.critical(self, "Error in signal analysis", f"{type(exc).__name__}: {exc}")
             self.btn.setEnabled(True)
             return
-        
+
+        # Displays the number of detected peaks in the label 
+        peak_count = sum(len(peak_set.x) for peak_set in result.peak_sets)
+        self.peak_count_label.setText(f"Peaks: {peak_count}")
+
         # This displaying of names can maybe be replaced with just labels in the graph or multiple graphs
         analysis_names = ", ".join(analysis.title for analysis in self.active_analyses)
         points_count = len(result.lines[0].x) if result.lines else 0
