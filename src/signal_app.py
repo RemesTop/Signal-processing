@@ -5,7 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QComboBox,
-    QPushButton, QSpinBox, QFileDialog, QCheckBox, QMenuBar, QMessageBox
+    QPushButton, QSpinBox, QFileDialog, QCheckBox, QMenuBar, QMessageBox, QLabel
 )
 from PySide6.QtCore import QSettings
 import pyqtgraph as pg
@@ -28,6 +28,12 @@ class SignalApp(QWidget):
         super().__init__()
         self.setWindowTitle("Signal app")
         self.resize(800, 600)
+
+        # Cached result and per-label checkboxes, no need to re-run analysis when toggling visibility of lines/peaks
+        self.result = None
+        self.line_checks = {}
+        self.peak_checks = {}
+        self.checks_layout = QHBoxLayout()
 
         # Options are saved to settings.ini and persist when restarting the app
         settings_file = Path(__file__).resolve().parent / "settings.ini"
@@ -92,9 +98,14 @@ class SignalApp(QWidget):
         top_layout.addWidget(self.peaks_checkbox)
         top_layout.addWidget(self.btn)
 
+
         layout = QVBoxLayout(self)
         layout.setMenuBar(self.menu_bar)
         layout.addLayout(top_layout)
+        layout.addWidget(self.plot_widget)
+
+        layout.addLayout(top_layout)
+        layout.addLayout(self.checks_layout)
         layout.addWidget(self.plot_widget)
 
         # Restore saved settings on startup
@@ -189,9 +200,61 @@ class SignalApp(QWidget):
             result = AnalysisResult.line_from_slice(signal_slice)
             
             self.plot_widget.setTitle(f"Points: {len(signal_slice.time)}, Downsampling method: {method}")
-        
-        plot_signal(self.plot_widget, result)
+
+        # Cache the result and rebuild the checkboxes for lines and peaks
+        self.result = result
+        self.rebuild_checkboxes(result)
+        self.redraw()
+
         self.btn.setEnabled(True)
+
+    def rebuild_checkboxes(self, result):
+        """Rebuilds the checkboxes for lines and peaks based on the provided result.
+        """
+
+        # Save the current state of checkboxes to restore after rebuilding
+        old_lines = {k: cb.isChecked() for k, cb in self.line_checks.items()}
+        old_peaks = {k: cb.isChecked() for k, cb in self.peak_checks.items()}
+
+        # Clears existing checkboxes
+        while self.checks_layout.count():
+            item = self.checks_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.line_checks, self.peak_checks = {}, {}
+
+        #Checkboxes for lines
+        self.checks_layout.addWidget(QLabel("Signals:"))
+        for label in dict.fromkeys(t.label for t in result.lines): 
+            cb = QCheckBox(str(label))
+            cb.setChecked(old_lines.get(label, True))
+            cb.toggled.connect(self.redraw)
+            self.checks_layout.addWidget(cb)
+            self.line_checks[label] = cb
+
+        #Checkboxes for peaks
+        peak_labels = list(dict.fromkeys(p.label for p in result.peak_sets))
+        if peak_labels:
+            self.checks_layout.addWidget(QLabel("Peaks:"))
+        for label in peak_labels:
+            cb = QCheckBox(str(label))
+            cb.setChecked(old_peaks.get(label, True))
+            cb.toggled.connect(self.redraw)
+            self.checks_layout.addWidget(cb)
+            self.peak_checks[label] = cb
+
+        self.checks_layout.addStretch()
+
+    def redraw(self):
+        """Redraws the plot based on the current result and checkbox states. 
+        Uses cached result and checkbox states to avoid re-running analysis. 
+        See rebuild_checkboxes() for how checkboxes are built."""
+    
+        if self.result is None:
+            return
+        hidden_lines = {k for k, cb in self.line_checks.items() if not cb.isChecked()}
+        hidden_peaks = {k for k, cb in self.peak_checks.items() if not cb.isChecked()}
+        plot_signal(self.plot_widget, self.result, hidden_lines, hidden_peaks)
 
     def apply_analysis_parameters(self, parameters: dict[str, dict]):
         """Apply the provided parameters to all the active analyses and run `plot_data`."""
@@ -200,6 +263,7 @@ class SignalApp(QWidget):
             for analysis in self.active_analyses
         }
         self.plot_data()
+    
 
 def main():
     app = QApplication(sys.argv)
