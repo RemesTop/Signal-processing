@@ -25,6 +25,8 @@ ACTIVE_ANALYSES: tuple[AnalysisFunction, ...] = (
 
 # Main app window for the project
 class SignalApp(QWidget):
+    """Main app window."""
+    
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Signal app")
@@ -116,6 +118,7 @@ class SignalApp(QWidget):
         QTimer.singleShot(0, view_box.updateAutoRange)
 
     def load_settings(self):
+        """Load the saved settings ini file."""
         saved_file = self.settings.value("file_path", "")
         if saved_file:
             self.file_input.setText(str(saved_file))
@@ -134,6 +137,7 @@ class SignalApp(QWidget):
             self.channel_combo.setCurrentText("Both channels")
 
     def save_settings(self):
+        """Save recently used signal processing configurations into an ini file."""
         self.settings.setValue("file_path", self.file_input.text())
         self.settings.setValue("downsample_method", self.combo.currentText())
         self.settings.setValue("downsample_factor", self.factor_input.value())
@@ -141,14 +145,17 @@ class SignalApp(QWidget):
         self.settings.sync()
 
     def on_channel_changed(self):
+        """When selecting displayed channel(s), plot the data if it has been read before."""
         if hasattr(self, "reader") and self.reader is not None and self.reader.data is not None:
             self.plot_data()
 
     def closeEvent(self, event):
+        """Save settings on closing the application."""
         self.save_settings()
         super().closeEvent(event)
 
     def browse_file(self):
+        """Open a file selection dialog and populate the file input field with the selected file's name."""
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select a file",
@@ -159,6 +166,7 @@ class SignalApp(QWidget):
             self.file_input.setText(file_path)
 
     def visualize(self):
+        """Read, convert and plot the selected file and save the settings."""
         self.save_settings()
         file_path = self.file_input.text().strip()
         if not file_path:
@@ -177,9 +185,11 @@ class SignalApp(QWidget):
             self.reader.ready.connect(self.plot_data)
 
     def update_progress(self, percent):
+        """Update csv conversion progress label."""
         self.plot_widget.setTitle(f"Converting csv to binary, please wait {percent:.0f}%")
 
     def _run_analysis(self, method, factor, channel_choice, parameters):
+        """Run the selected signal analysis functions for the current `SignalReader`'s data."""
         # Background worker task: slices data and runs signal analysis
         total_duration = self.reader.total_samples / self.reader.sample_rate
         signal_slice = self.reader.get_slice(0, total_duration, downsample_factor=factor, downsample=method)
@@ -204,6 +214,7 @@ class SignalApp(QWidget):
         return result
 
     def plot_data(self):
+        """Run signal analysis and plotting in a background thread."""
         method = self.combo.currentText()
         factor = self.factor_input.value()
         channel_choice = self.channel_combo.currentText()
@@ -219,6 +230,7 @@ class SignalApp(QWidget):
         QThreadPool.globalInstance().start(worker)
 
     def _on_analysis_finished(self, result):
+        """Plot the signal and update the peak label and plot title."""
         # Displays the number of detected peaks in the label 
         peak_count = sum(len(peak_set.x) for peak_set in result.peak_sets)
         self.peak_count_label.setText(f"Peaks: {peak_count}")
@@ -234,6 +246,7 @@ class SignalApp(QWidget):
         self.btn.setEnabled(True)
 
     def _on_analysis_error(self, err):
+        """Show an error message for an error in signal analysis."""
         self.peak_count_label.setText("Peaks: unavailable")
         QMessageBox.critical(self, "Error in signal analysis", f"{err[0].__name__}: {err[1]}")
         self.btn.setEnabled(True)

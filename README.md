@@ -4,11 +4,12 @@ This is a signal processing and peak detection GUI application written in Python
 
 ## How to run the application
 
-1. Create a folder named "data" at root
-2. Place signal csv data into the "data" folder
-3. Open terminal and create a virtual environment
-4. Install requirements if needed
-5. Run scripts (With venv)
+1. Open a terminal and create a virtual environment
+   - Optional but recommended. The rest of these instructions assume you're using the virtual environment.
+2. Install requirements if needed
+3. Run scripts (with venv)
+
+Once you have the application running, see [Using the application](#using-the-application).
 
 ### Requirements
 
@@ -43,15 +44,17 @@ The venv is used to keep the project packages separate from the rest of the Pyth
 After launching the application you can
 
 1. Select a `.csv` or `.dat` signal file to read using the "Browse" button.
+   - A csv file will be converted to a dat file, which can take a considerable amount of time for larger files. Once you have the dat file you can always open that to avoid the conversion process.
 2. Choose a downsampling method and factor.
    - "Decimation" with a factor of n only uses one in every n values of the signal.
    - "Max points" with a factor of n uses the maximum value in every n values of the signal.
    - Selecting "None" or setting the factor to 1 does no downsampling.
-3. Check "Detect peaks" to run peak detection on the signal.
-   - Skipping peak detection displays the signal slightly faster.
-4. Click "Visualize Data" to run the signal analysis and show the results.
+3. Select which channels to analyze.
+   - The signal files are expected to contain two channels of data.
+   - If only one is needed, you can select that from the dropdown to speed up the signal analysis.
+4. Click "Run" to run the signal analysis and show the results.
 
-The graph will now display the signal in a time-amplitude graph. Found peaks are displayed as circles on the graph.
+The graph will now display the signal in a time-amplitude graph. Found peaks are displayed as circles on the graph. The "Peaks" label in the top bar of the application shows the number of found peaks.
 
 ### Editing the signal processing and peak finding
 

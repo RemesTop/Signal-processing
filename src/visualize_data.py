@@ -6,6 +6,7 @@ from signal_reader import SignalReader
 from signal_classes import AnalysisResult
 
 def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
+    """Populate `plot_widget` with the lines and peak sets from `result`."""
     plot_widget.clear()
     plot_item = plot_widget.getPlotItem()
     view_box = plot_item.getViewBox()
