@@ -8,6 +8,14 @@ from signal_classes import AnalysisResult
 def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
     plot_widget.clear()
     plot_item = plot_widget.getPlotItem()
+    view_box = plot_item.getViewBox()
+
+    # Update the zoom limits of the plot widget
+    time = result.slice.time
+    if time.size:
+        view_box.setLimits(xMin=time.min(), xMax=time.max(), maxXRange=time.max() - time.min(), minXRange=2e-4)
+    else:
+        view_box.setLimits(xMin=None, xMax=None, maxXRange=None, minXRange=2e-4)
 
     # Clip to visible view and auto-downsample to screen resolution for performance
     plot_item.setClipToView(True)
@@ -34,6 +42,7 @@ def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
 
     # Center and fit the graph view to the currently plotted channel(s)
     plot_widget.autoRange()
+    view_box.enableAutoRange(axis=pg.ViewBox.YAxis)
 
 
 # Main method for testing the visualizer only

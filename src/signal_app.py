@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QComboBox,
     QPushButton, QSpinBox, QFileDialog, QCheckBox, QMenuBar, QMessageBox, QLabel
 )
-from PySide6.QtCore import QSettings, QThreadPool
+from PySide6.QtCore import QSettings, QThreadPool, QTimer
 import pyqtgraph as pg
 from signal_reader import SignalReader
 from worker import Worker
@@ -86,6 +86,11 @@ class SignalApp(QWidget):
         self.plot_widget.setLabel("bottom", "Time", units="s")
         self.plot_widget.setLabel("left", "Reading")
         self.plot_widget.setTitle(" ")
+        view_box: pg.ViewBox = self.plot_widget.getViewBox()
+        # Auto fit y-axis
+        view_box.setMouseEnabled(x=True, y=False)
+        view_box.setAutoVisible(y=True)
+        view_box.sigXRangeChanged.connect(self._fit_plot_y)
         self.factor_input.setPrefix("Factor: ")
 
         # Layout
@@ -105,6 +110,10 @@ class SignalApp(QWidget):
 
         # Restore saved settings on startup
         self.load_settings()
+
+    def _fit_plot_y(self, view_box: pg.ViewBox, _):
+        """Refresh the auto-ranging of the pyqtgraph ViewBox."""
+        QTimer.singleShot(0, view_box.updateAutoRange)
 
     def load_settings(self):
         saved_file = self.settings.value("file_path", "")
