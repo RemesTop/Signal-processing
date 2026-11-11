@@ -5,11 +5,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QComboBox,
-    QPushButton, QSpinBox, QFileDialog, QCheckBox, QMenuBar, QMessageBox, QLabel
+    QPushButton, QSpinBox, QFileDialog, QMenuBar, QMessageBox, QLabel
 )
 from PySide6.QtCore import QSettings, QThreadPool, QTimer
 import pyqtgraph as pg
-from signal_reader import SignalReader
+from signal_reader import SignalReader, convert_csv_files
 from worker import Worker
 from visualize_data import plot_signal
 from signal_classes import AnalysisResult, Slice
@@ -19,7 +19,7 @@ from peak_finder import ANALYSIS_FUNCTIONS, AnalysisFunction
 
 # Analysis functions that are currently run for each slice
 ACTIVE_ANALYSES: tuple[AnalysisFunction, ...] = (
-    ANALYSIS_FUNCTIONS["Custom decimation"],
+    ANALYSIS_FUNCTIONS["Raw signal with peaks"],
 )
 
 
@@ -48,6 +48,11 @@ class SignalApp(QWidget):
 
         # Menu bar
         self.menu_bar = QMenuBar()
+        
+        file_menu = self.menu_bar.addMenu("File")
+        self.action_convert_files = file_menu.addAction("Convert CSV files to DAT")
+        self.action_convert_files.triggered.connect(self.convert_files)
+        
         view_menu = self.menu_bar.addMenu("View")
         self.action_param_window = view_menu.addAction("Analysis parameters window")
         self.action_param_window.setCheckable(True)
@@ -258,6 +263,60 @@ class SignalApp(QWidget):
             for analysis in self.active_analyses
         }
         self.plot_data()
+    
+    
+    # CSV to DAT conversion
+    
+    def convert_files(self):
+        """Convert selected CSV files to DAT without loading or plotting them."""
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select CSV files to convert",
+            "",
+            "CSV files (*.csv)",
+        )
+        if not file_paths:
+            return
+
+        self.action_convert_files.setEnabled(False)
+        
+        # Convert in a background worker
+        worker = Worker(convert_csv_files, file_paths)
+        worker.signals.result.connect(self._on_batch_conversion_finished)
+        worker.signals.error.connect(self._on_batch_conversion_error)
+        worker.signals.finished.connect(self._on_batch_conversion_worker_finished)
+        self.batch_conversion_worker = worker
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_batch_conversion_finished(self, converted_paths):
+        """Show a message box saying how many CSV files were converted."""
+        count = len(converted_paths)
+        if count:
+            QMessageBox.information(
+                self,
+                "CSV conversion complete",
+                f"Converted {count} CSV file(s) to DAT.",
+            )
+        else:
+            QMessageBox.information(
+                self,
+                "CSV conversion complete",
+                "All selected CSV files already have DAT files.",
+            )
+
+    def _on_batch_conversion_error(self, error):
+        """Show a message box for an error during batch conversion."""
+        self.plot_widget.setTitle("CSV conversion failed")
+        QMessageBox.critical(
+            self,
+            "CSV conversion failed",
+            f"{error[0].__name__}: {error[1]}",
+        )
+
+    def _on_batch_conversion_worker_finished(self):
+        """Re-enable batch conversion menu item after the worker is finished."""
+        self.action_convert_files.setEnabled(True)
+        self.batch_conversion_worker = None
 
 def main():
     app = QApplication(sys.argv)

@@ -1,4 +1,5 @@
 import numpy as np
+from collections.abc import Iterable
 from pathlib import Path
 from PySide6.QtCore import QObject, Signal, QThreadPool
 from signal_converter import SignalConverter
@@ -7,6 +8,40 @@ from worker import Worker
 import downsampler
 from signal_constants import DEFAULT_SAMPLE_RATE
 from signal_classes import Slice
+
+
+def convert_csv_files(file_paths: Iterable[str | Path], progress_callback: Signal | None = None) -> list[Path]:
+    """Convert CSV signal files to DAT files and return the converted paths."""
+    converted_paths = []
+    for file_path in file_paths:
+        source_path = Path(file_path)
+        if source_path.suffix.lower() != ".csv":
+            raise ValueError(f"Expected a CSV file, got: {source_path}")
+
+        dat_path = source_path.with_suffix(".dat")
+        if dat_path.exists():
+            continue
+
+        print(f"Converting {source_path.name} to binary (.dat).")
+        tmp_path = dat_path.with_suffix(".tmp")
+        converter = SignalConverter()
+        try:
+            success = converter.start(
+                source_signal_path=source_path,
+                target_signal_path=tmp_path,
+                progress_callback=progress_callback)
+            if not success:
+                raise RuntimeError(f"Conversion failed for {source_path}")
+            tmp_path.replace(dat_path)
+        except Exception:
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise
+
+        converted_paths.append(dat_path)
+
+    return converted_paths
+
 
 # A class to read .dat binary files by slices and downsample them for easier usage
 class SignalReader(QObject):
@@ -24,34 +59,24 @@ class SignalReader(QObject):
         if file_path.suffix.lower() == ".csv":
             self.dat_path = file_path.with_suffix(".dat")
             if not self.dat_path.exists():
-                print(f"Converting {file_path.name} to binary (.dat).. This is done once.")
-                self.converter = SignalConverter()
-                self.tmp_path = self.dat_path.with_suffix(".tmp")
-
                 # If multithreading is enabled, run conversion in the background
                 if multithreading:
-                    worker = Worker(
-                        self.converter.start,
-                        source_signal_path=file_path,
-                        target_signal_path=self.tmp_path
-                    )
+                    worker = Worker(convert_csv_files, [file_path])
                     worker.signals.progress.connect(self.progress.emit)
                     worker.signals.result.connect(self.on_conversion_finished)
                     QThreadPool.globalInstance().start(worker)
                     return
                 else:
                     # Otherwise convert directly (blocks until done)
-                    self.converter.start(file_path, self.tmp_path)
-                    self.tmp_path.replace(self.dat_path)
+                    convert_csv_files([file_path])
         else:
             self.dat_path = file_path
 
         self._init_memmap()
 
-    def on_conversion_finished(self, success):
+    def on_conversion_finished(self, _converted_paths):
         # Called when background worker finishes
-        if success and self.tmp_path.exists():
-            self.tmp_path.replace(self.dat_path)
+        if self.dat_path in _converted_paths and self.dat_path.exists():
             self._init_memmap()
 
     def _init_memmap(self):
