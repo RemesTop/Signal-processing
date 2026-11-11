@@ -49,11 +49,9 @@ Color = int | tuple | str | QColor
 """pyqtgraph integer, tuple or string color"""
 
 
-# Currently Line and PeakSet are redundantly the same, but maybe
-# they can have some additional, distinct attributes later
 @dataclass(frozen=True)
 class Line:
-    """A graphed line with x and y points, a label, and a color."""
+    """A signal line with x and y points, a label, and a color."""
     x: np.ndarray
     y: np.ndarray
     label: str
@@ -62,11 +60,12 @@ class Line:
 
 @dataclass(frozen=True)
 class PeakSet:
-    """A graphed set of points with x and y locations, a label, and a color."""
+    """A set of signal peaks with x and y locations, properties, a label, and a color."""
     x: np.ndarray
     y: np.ndarray
     label: str
     color: Color
+    properties: dict[str, np.ndarray] = field(default_factory=dict)
 
 
 @dataclass
@@ -90,17 +89,18 @@ class AnalysisResult:
 
     # It might be more convenient if this didn't need the y parameter and just took the y values for graphing
     # from the line that's defined to correspond to these peaks. 
-    def peaks(self, x: np.ndarray, y: np.ndarray, label: str = "peaks", color: Color = "#bb0000") -> None:
+    def peaks(self, x: np.ndarray, y: np.ndarray, properties: dict[str, np.ndarray] | None = None, label: str = "peaks", color: Color = "#bb0000") -> None:
         """Adds a set of peaks to this analysis result. Using the same label for multiple
         slices allows the lines to connect when showing a graph.
 
         Args:
             x: One-dimensional array of peak x-coordinates.
             y: One-dimensional array of peak y-coordinates.
+            properties: Dictionary containing arrays of properties for the peaks.
             label: Text label for the peak set.
             color: Point color.
         """
-        self.peak_sets.append(PeakSet(x, y, label, color))
+        self.peak_sets.append(PeakSet(x, y, label, color, properties or {}))
 
     @staticmethod
     def line_from_slice(slice: Slice):

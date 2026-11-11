@@ -1,6 +1,5 @@
 """
-Intented to be collection of functions to find peaks in a given data set.
-Or just a single peak finding algorithm, wil have to see how it goes.
+Functions used to process a signal data set and find peaks in it.
 """
 import numpy as np
 from scipy.signal import find_peaks, peak_widths, butter, sosfiltfilt, decimate
@@ -141,7 +140,7 @@ def scipy_find_peaks(out: AnalysisResult,
     and adding the result to the AnalysisResult.
     """
     idx, properties = find_peaks(x, **peak_options)
-    out.peaks(time[idx], x[idx], f"Channel {channel + 1} peaks")
+    out.peaks(time[idx], x[idx], properties, f"Channel {channel + 1} peaks")
 
 
 
