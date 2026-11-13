@@ -13,7 +13,7 @@ from signal_reader import SignalReader, convert_csv_files
 from worker import Worker
 from visualize_data import plot_signal
 from signal_classes import AnalysisResult, Slice
-from analysis_parameters_dialog import AnalysisParametersDialog
+from functions_parameters_dialog import FunctionsParametersDialog
 from peak_finder import ANALYSIS_FUNCTIONS, AnalysisFunction
 
 
@@ -41,7 +41,7 @@ class SignalApp(QWidget):
         # Editable parameters for each analysis function
         self.analysis_parameters = {analysis.key: analysis.defaults for analysis in self.active_analyses}
         # Dialog for editing the parameters
-        self.parameters_dialog = AnalysisParametersDialog(self.active_analyses, self)
+        self.parameters_dialog = FunctionsParametersDialog(tuple(ANALYSIS_FUNCTIONS.values()), self.active_analyses, self)
         self.parameters_dialog.changes_applied.connect(self.apply_analysis_parameters)
         self.parameters_dialog.closed.connect(lambda: self.action_param_window.setChecked(False))
 
@@ -54,7 +54,7 @@ class SignalApp(QWidget):
         self.action_convert_files.triggered.connect(self.convert_files)
         
         view_menu = self.menu_bar.addMenu("View")
-        self.action_param_window = view_menu.addAction("Analysis parameters window")
+        self.action_param_window = view_menu.addAction("Analysis functions and parameters")
         self.action_param_window.setCheckable(True)
         self.action_param_window.setChecked(False)
         self.action_param_window.toggled.connect(self.parameters_dialog.setVisible)
@@ -256,8 +256,9 @@ class SignalApp(QWidget):
         QMessageBox.critical(self, "Error in signal analysis", f"{err[0].__name__}: {err[1]}")
         self.btn.setEnabled(True)
 
-    def apply_analysis_parameters(self, parameters: dict[str, dict]):
-        """Apply the provided parameters to all the active analyses and run `plot_data` if data is available."""
+    def apply_analysis_parameters(self, functions: tuple[AnalysisFunction, ...], parameters: dict[str, dict]):
+        """Apply selected analysis functions and their parameters, then update the plot if data is available."""
+        self.active_analyses = functions
         self.analysis_parameters = {
             analysis.key: dict(parameters.get(analysis.key, analysis.defaults))
             for analysis in self.active_analyses

@@ -199,7 +199,7 @@ def scipy_find_peaks(out: AnalysisResult,
 # -------------------------------------------------- Analysis functions
 
 
-@analysis_function("Example analysis")
+# @analysis_function("Example analysis")
 def example_analysis(s: Slice, out: AnalysisResult):
     """Example of a signal analysis function. Returns the unprocessed signal
     and peaks at points 10, 50 and 100.
