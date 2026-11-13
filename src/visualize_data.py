@@ -39,7 +39,7 @@ def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
                          symbol="o",
                          symbolBrush=pg.mkBrush(None), symbolPen=pg.mkPen(peak_set.color, width=1.5),
                          symbolSize=7,
-                         name=peak_set.label)
+                         name=f"{peak_set.label} ({len(peak_set.x)})")
 
     # Center and fit the graph view to the currently plotted channel(s)
     plot_widget.autoRange()
