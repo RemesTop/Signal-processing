@@ -80,8 +80,6 @@ class SignalApp(QWidget):
         self.channel_combo.addItems(["Both channels", "Channel 1", "Channel 2"])
         self.channel_combo.setCurrentText("Both channels")
         self.channel_combo.currentIndexChanged.connect(self.on_channel_changed)
-        # Label to display the number of detected peaks
-        self.peak_count_label = QLabel("Peaks: not detected")
 
         # 5. Visualize Data button (When the button is pressed)
         self.btn = QPushButton("Run")
@@ -107,7 +105,6 @@ class SignalApp(QWidget):
         top_layout.addWidget(self.combo)
         top_layout.addWidget(self.factor_input)
         top_layout.addWidget(self.channel_combo)
-        top_layout.addWidget(self.peak_count_label)
         top_layout.addWidget(self.btn)
 
         layout = QVBoxLayout(self)
@@ -236,14 +233,16 @@ class SignalApp(QWidget):
 
     def _on_analysis_finished(self, result):
         """Plot the signal and update the peak label and plot title."""
-        # Displays the number of detected peaks in the label 
+        # Displays the number of detected peaks in the label
+
         peak_count = sum(len(peak_set.x) for peak_set in result.peak_sets)
-        self.peak_count_label.setText(f"Peaks: {peak_count}")
 
         # This displaying of names can maybe be replaced with just labels in the graph or multiple graphs
         analysis_names = ", ".join(analysis.title for analysis in self.active_analyses)
         points_count = len(result.lines[0].x) if result.lines else 0
-        self.plot_widget.setTitle(f"Points: {points_count}, Functions: {analysis_names}")
+        self.plot_widget.setTitle(
+            f"Points: {points_count}, Peaks: {peak_count}, Functions: {analysis_names}"
+        )
         # Show the parameter editing dialog
         self.action_param_window.setChecked(True)
 
@@ -252,7 +251,7 @@ class SignalApp(QWidget):
 
     def _on_analysis_error(self, err):
         """Show an error message for an error in signal analysis."""
-        self.peak_count_label.setText("Peaks: unavailable")
+        self.plot_widget.setTitle("Peaks: unavailable.")
         QMessageBox.critical(self, "Error in signal analysis", f"{err[0].__name__}: {err[1]}")
         self.btn.setEnabled(True)
 
