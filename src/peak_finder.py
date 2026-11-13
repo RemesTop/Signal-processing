@@ -2,6 +2,7 @@
 Functions used to process a signal data set and find peaks in it.
 """
 import numpy as np
+from scipy import ndimage
 from scipy.signal import find_peaks, peak_widths, butter, sosfiltfilt, decimate
 from dataclasses import dataclass
 from collections.abc import Callable
@@ -101,6 +102,54 @@ def butterworth_lowpass_filter(
 
 
 
+# -------------------------------------------------- Baseline correction
+
+
+def remove_baseline_morphological(
+    x: np.ndarray,
+    block_size: int = 10,
+    baseline_window: int = 1200,
+    bias: float | None = None
+) -> np.ndarray:
+    """Remove a slow varying baseline estimated with a morphological opening.
+
+    The opening size is based on `baseline_window`, which is measured in
+    samples of the input signal. The opening uses medians of `block_size`
+    samples to reduce sensitivity to noise.
+    If `bias` is `None`, its value is estimated as the median residual.
+    """
+    if not isinstance(block_size, (int, np.integer)) or block_size < 1:
+        raise ValueError("block_size must be a positive integer")
+    if not isinstance(baseline_window, (int, np.integer)) or baseline_window < 1:
+        raise ValueError("baseline_window must be a positive integer")
+
+    # Median of each block of the signal
+    # Each blocks center point is also stored
+    full_size = x.size // block_size * block_size
+    medians = np.median(x[:full_size].reshape(-1, block_size), axis=1) if full_size else np.empty(0)
+    centers = (np.arange(len(medians)) * block_size + (block_size - 1) / 2)
+    if full_size < x.size:
+        medians = np.append(medians, np.median(x[full_size:]))
+        centers = np.append(centers, full_size + (x.size - full_size - 1) / 2)
+
+    # Apply the 1D morphological opening using a minimum filter and a maximum filter
+    opening_size = min(max(1, int(np.ceil(baseline_window / block_size))), len(medians))
+    opened = ndimage.minimum_filter1d(medians, size=opening_size)
+    opened = ndimage.maximum_filter1d(opened, size=opening_size)
+
+    # Smoothing
+    smoothed = ndimage.uniform_filter1d(opened, size=max(1, opening_size // 4))
+
+    # Interpolate the baseline points to the entire signal length
+    baseline = np.interp(np.arange(x.size), centers, smoothed)
+
+    # Remove constant offset (estimated as the median residual between signal and baseline)
+    if bias is None:
+        bias = float(np.median(x - baseline))
+    return x - (baseline + bias)
+
+
+
 # -------------------------------------------------- Peak finding
 
 
@@ -139,6 +188,9 @@ def scipy_find_peaks(out: AnalysisResult,
     """Convenience function for calling `scipy.signal.find_peaks`
     and adding the result to the AnalysisResult.
     """
+    # Make sure to only pass the appropriate parameters to find_peaks
+    peak_options = {key: name for key, name in peak_options.items() if key in
+                    (param.name for param in FIND_PEAKS_PARAMETERS)}
     idx, properties = find_peaks(x, **peak_options)
     out.peaks(time[idx], x[idx], properties, f"Channel {channel + 1} peaks")
 
@@ -181,7 +233,7 @@ def example_analysis(s: Slice, out: AnalysisResult):
     (
         AnalysisParameter("used_downsample_factor", 1),
         *_find_peaks_parameters(
-            prominence=40),
+            prominence=40)
     ),
 )
 def raw_signal_with_peaks(s: Slice, out: AnalysisResult,
@@ -219,7 +271,7 @@ def raw_signal_with_peaks(s: Slice, out: AnalysisResult,
     (
         AnalysisParameter("decimation_factor", 10),
         *_find_peaks_parameters(
-            prominence=40),
+            prominence=40)
     ),
 )
 def scipy_decimation(s: Slice, out: AnalysisResult,
@@ -243,7 +295,6 @@ def scipy_decimation(s: Slice, out: AnalysisResult,
         
         time = s.time[::decimation_factor]
         x = decimate(x, decimation_factor)
-        # x = downsample(x, downsample_factor)
         
         # Create line
         out.line(time, x,
@@ -258,7 +309,7 @@ def scipy_decimation(s: Slice, out: AnalysisResult,
     (
         AnalysisParameter("decimation_factor", 10),
         *_find_peaks_parameters(
-            prominence=40),
+            prominence=40)
     ),
 )
 def custom_decimation(s: Slice, out: AnalysisResult,
@@ -285,7 +336,7 @@ def custom_decimation(s: Slice, out: AnalysisResult,
             x,
             decimation_factor=decimation_factor,
             cutoff=None,
-            fs=s.sample_rate,
+            fs=s.sample_rate
         )
         
         time = s.time[::decimation_factor]
@@ -304,7 +355,7 @@ def custom_decimation(s: Slice, out: AnalysisResult,
         AnalysisParameter("decimation_factor", 10),
         AnalysisParameter("lowpass_cutoff", 250),
         *_find_peaks_parameters(
-            prominence=40),
+            prominence=40)
     ),
 )
 def extra_lowpass(s: Slice, out: AnalysisResult,
@@ -331,7 +382,7 @@ def extra_lowpass(s: Slice, out: AnalysisResult,
         x = butterworth_lowpass_filter(
             x,
             decimation_factor=decimation_factor,
-            fs=s.sample_rate,
+            fs=s.sample_rate
         )
         
         time = s.time[::decimation_factor]
@@ -342,6 +393,70 @@ def extra_lowpass(s: Slice, out: AnalysisResult,
             x,
             cutoff=lowpass_cutoff,
             fs=s.sample_rate / decimation_factor
+        )
+        
+        out.line(time, x,
+                 f"Channel {ch + 1}", color=ch)
+        
+        # Find peaks
+        scipy_find_peaks(out, time, x, ch, peak_options)
+
+
+@analysis_function(
+    "Baseline correction",
+    (
+        AnalysisParameter("decimation_factor", 10),
+        AnalysisParameter("block_size", 10),
+        AnalysisParameter("baseline_window", 600),
+        AnalysisParameter("bias", None),
+        *_find_peaks_parameters(
+            prominence=40)
+    ),
+)
+def baseline_correction(s: Slice, out: AnalysisResult,
+                        decimation_factor: int = 10,
+                        block_size: int = 10,
+                        baseline_window: int = 600,
+                        bias: float = None,
+                        **peak_options):
+    """Low-pass filter, downsample, and baseline correction. Then SciPy peak finding.
+    Don't downsample the signal before passing to this function.
+
+    **Line:**<br>
+    Downsampled by a factor of 10 using `butterworth_lowpass_filter` and
+    `downsampler.downsample`, then baseline corrected based on `block_size`, `baseline_window`
+    and `bias`.
+
+    **Peaks:**<br>
+    `scipy.signal.find_peaks` with a 5 ms minimum peak distance and 40 prominence.
+    """
+    peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate) / decimation_factor))
+    peak_options.setdefault("prominence", 40)
+    
+    if baseline_window is None:
+        baseline_window = 6_000 // decimation_factor
+    
+    # Filter and detect peaks only for requested channel(s) to optimize performance
+    for ch in s.channel_indices:
+        x = s.data[:, ch]
+        
+        if decimation_factor > 1:
+            x = butterworth_lowpass_filter(
+                x,
+                decimation_factor=decimation_factor,
+                cutoff=None,
+                fs=s.sample_rate
+            )
+            
+            time = s.time[::decimation_factor]
+            x = downsample(x, decimation_factor)
+            
+        # Subtract the morphological opening baseline
+        x = remove_baseline_morphological(
+            x,
+            block_size=block_size,
+            baseline_window=baseline_window,
+            bias=bias
         )
         
         out.line(time, x,
