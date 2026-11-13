@@ -256,12 +256,13 @@ class SignalApp(QWidget):
         self.btn.setEnabled(True)
 
     def apply_analysis_parameters(self, parameters: dict[str, dict]):
-        """Apply the provided parameters to all the active analyses and run `plot_data`."""
+        """Apply the provided parameters to all the active analyses and run `plot_data` if data is available."""
         self.analysis_parameters = {
             analysis.key: dict(parameters.get(analysis.key, analysis.defaults))
             for analysis in self.active_analyses
         }
-        self.plot_data()
+        if hasattr(self, "reader") and self.reader is not None and self.reader.data is not None:
+            self.plot_data()
     
     
     # CSV to DAT conversion
