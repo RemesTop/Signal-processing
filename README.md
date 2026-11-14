@@ -58,8 +58,6 @@ The graph will now display the signal in a time-amplitude graph. Found peaks are
 
 ### Editing the signal processing and peak finding
 
-Check "View" > "Analysis functions and parameters" to select which functions process the signal and to edit their parameters. The values of the parameters can be `None` for no value or the default value, simple numerical values, calculations, or a tuple like `(10, None)` or `(-5, 5)` for the parameters that support that. Click "Apply" to re-process the current signal and update the graph.
+Check "View" > "Analysis functions and parameters" to select which functions process the signal and to edit their parameters. The values of the parameters can be `None` for no value or the default value, simple numerical values, calculations, or a tuple like `(10, None)` or `(-5, 5)` for the parameters that support that. Click "Apply" to re-process the current signal and update the graph. Doing that will also save the selected functions and the parameters so they persist after closing the app.
 
 If you set the "distance" field to `None`, most signal analysis functions currently will use a minimum distance of 5 milliseconds between peaks (adjusted for the decimation/downsampling).
-
-The initially selected functions are configured in `src/signal_app.py` in `ACTIVE_ANALYSES`. The available functions are listed in `peak_finder.ANALYSIS_FUNCTIONS`. Each analysis function's editable parameters and their defaults are defined alongside the functions in `src/peak_finder.py`.

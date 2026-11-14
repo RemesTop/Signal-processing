@@ -1,5 +1,5 @@
 import ast
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtWidgets import (
@@ -10,14 +10,19 @@ from PySide6.QtWidgets import (
 from peak_finder import AnalysisFunction
 
 class FunctionsParametersDialog(QDialog):
-    """Dialog for selecting signal analysis functions and editing their parameters."""
+    """Dialog for selecting signal analysis functions and editing their parameters.
+    The changes made here are only saved once "Apply" is clicked.
+    """
     changes_applied = Signal(tuple, dict)
     closed = Signal()
 
     FUNCS_AREA_WIDTH = 180
     PARAMS_AREA_WIDTH = 350
 
-    def __init__(self, analyses: Sequence[AnalysisFunction], selected_analyses: Sequence[AnalysisFunction], parent=None):
+    def __init__(self,
+                 analyses: Sequence[AnalysisFunction],
+                 selected_analyses: Sequence[AnalysisFunction],
+                 parent=None):
         super().__init__(parent)
 
         self.analyses = tuple(analyses)
@@ -127,15 +132,40 @@ class FunctionsParametersDialog(QDialog):
         layout.addLayout(hbox_buttons)
 
     def apply_parameters(self):
-        """Evaluate the parameters for each selected function
-        and emit `apply_called` with the dictionary of those values.
+        """Evaluate the parameters for each selected function and
+        emit `changes_applied` with the selected functions and their parameters
+        if the parameters were all valid.
         """
-        parameters = {}
+        try:
+            selected_analyses, parameters = self.get_selected_functions_and_parameters()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid analysis parameter", str(exc))
+            return
+
+        self.changes_applied.emit(selected_analyses, parameters)
+
+    def set_selected_functions_and_parameters(self,
+                                              functions: Sequence[AnalysisFunction],
+                                              parameters: Mapping[str, Mapping[str, object]]):
+        """Set the selected functions and their displayed parameter values."""
+        selected_keys = {analysis.key for analysis in functions}
+        for analysis in self.analyses:
+            self.checkboxes[analysis.key].setChecked(analysis.key in selected_keys)
+            for name, field in self.fields[analysis.key].items():
+                value = parameters.get(analysis.key, {}).get(name, analysis.defaults[name])
+                field.setText(str(value))
+
+    def get_selected_functions_and_parameters(self) -> tuple[tuple[AnalysisFunction, ...], dict[str, dict[str, object]]]:
+        """Get the selected functions and their evaluated parameter values.
+        Raises a ValueError if a parameter was invalid.
+        """
         selected_analyses = tuple(
             analysis
             for analysis in self.analyses
             if self.checkboxes[analysis.key].isChecked()
         )
+        
+        parameters = {}
         for analysis in selected_analyses:
             analysis_parameters = {}
             
@@ -148,14 +178,30 @@ class FunctionsParametersDialog(QDialog):
                     # Type and bounds checking can be added here if needed
                     analysis_parameters[name] = evaluated_value
                 except (ValueError, SyntaxError) as exc:
-                    QMessageBox.warning(self, "Invalid analysis parameter",
-                                        f"{analysis.title} — {name}: enter a number, None, or a tuple for a range-valued parameter.\n{exc}")
                     field.setFocus()
-                    return
+                    raise ValueError(f"{analysis.title} - {name}: enter a number, None, or a tuple for a range-valued parameter.\n{exc}") from exc
             
             parameters[analysis.key] = analysis_parameters
+        
+        return selected_analyses, parameters
 
-        self.changes_applied.emit(selected_analyses, parameters)
+    def get_selected_functions_and_parameter_texts(self) -> tuple[tuple[AnalysisFunction, ...], dict[str, dict[str, str]]]:
+        """Get the selected functions and their parameter field contents as text."""
+        selected_analyses = tuple(
+            analysis
+            for analysis in self.analyses
+            if self.checkboxes[analysis.key].isChecked()
+        )
+        
+        parameters = {
+            analysis.key: {
+                name: field.text()
+                for name, field in self.fields[analysis.key].items()
+            }
+            for analysis in selected_analyses
+        }
+        
+        return selected_analyses, parameters
 
     def showEvent(self, event):
         parent = self.parentWidget()

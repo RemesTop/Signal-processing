@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 
@@ -17,15 +18,12 @@ from functions_parameters_dialog import FunctionsParametersDialog
 from peak_finder import ANALYSIS_FUNCTIONS, AnalysisFunction
 
 
-# Analysis functions that are currently run for each slice
-ACTIVE_ANALYSES: tuple[AnalysisFunction, ...] = (
-    ANALYSIS_FUNCTIONS["Raw signal with peaks"],
-)
-
-
 # Main app window for the project
 class SignalApp(QWidget):
     """Main app window."""
+    
+    # Analysis function selected by default if there are no saved selections
+    DEFAULT_ANALYSIS = ANALYSIS_FUNCTIONS["Raw signal with peaks"]
     
     def __init__(self):
         super().__init__()
@@ -37,12 +35,12 @@ class SignalApp(QWidget):
         self.settings = QSettings(str(settings_file), QSettings.IniFormat)
 
         # Analysis functions that are run for each slice
-        self.active_analyses = ACTIVE_ANALYSES
+        self.active_analyses = (self.DEFAULT_ANALYSIS,)
         # Editable parameters for each analysis function
         self.analysis_parameters = {analysis.key: analysis.defaults for analysis in self.active_analyses}
         # Dialog for editing the parameters
         self.parameters_dialog = FunctionsParametersDialog(tuple(ANALYSIS_FUNCTIONS.values()), self.active_analyses, self)
-        self.parameters_dialog.changes_applied.connect(self.apply_analysis_parameters)
+        self.parameters_dialog.changes_applied.connect(self.update_analysis_functions)
         self.parameters_dialog.closed.connect(lambda: self.action_param_window.setChecked(False))
 
 
@@ -138,12 +136,87 @@ class SignalApp(QWidget):
         else:
             self.channel_combo.setCurrentText("Both channels")
 
+        # Selected analysis functions and their parameters
+        saved_analyses = self.settings.value("analysis_functions", "")
+        analyses = ()
+        parameters = {}
+        if saved_analyses:
+            # The setting is stored as JSON
+            try:
+                functions_json = json.loads(str(saved_analyses))
+            except json.JSONDecodeError as exc:
+                QMessageBox.warning(self, "Invalid saved analysis settings",
+                                    f"Could not load saved analysis functions and parameters:\n{exc}")
+                functions_json = {}
+
+            if not isinstance(functions_json, dict):
+                functions_json = {}
+                
+            # Saved functions
+            functions_keys = functions_json.get("functions", [])
+            if not isinstance(functions_keys, list):
+                functions_keys = []
+            analyses = tuple(
+                analysis
+                for _, analysis in ANALYSIS_FUNCTIONS.items()
+                if analysis.key in functions_keys
+            )
+            
+            # Saved parameters
+            parameters = functions_json.get("parameters", {})
+            if not isinstance(parameters, dict):
+                parameters = {}
+            parameters = {
+                key: value
+                for key, value in parameters.items()
+                if isinstance(value, dict)
+            }
+
+        if not analyses:
+            analyses = (self.DEFAULT_ANALYSIS,)
+        
+        # Populate the dialog
+        self.parameters_dialog.set_selected_functions_and_parameters(analyses, parameters)
+        self.active_analyses = analyses
+        # First set the default parameters
+        self.analysis_parameters = {analysis.key: analysis.defaults for analysis in analyses}
+        # Then use the dialog to parse the saved string values
+        try:
+            self.active_analyses, self.analysis_parameters = self.parameters_dialog.get_selected_functions_and_parameters()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid saved analysis settings",
+                                f"Could not apply saved analysis parameters:\n{exc}")
+
     def save_settings(self):
-        """Save recently used signal processing configurations into an ini file."""
+        """Save recently used signal processing configurations into an ini file.
+        Doesn't include saving the selected analysis functions and parameters.
+        For those, use `save_analysis_functions_and_parameters`.
+        """
         self.settings.setValue("file_path", self.file_input.text())
         self.settings.setValue("downsample_method", self.combo.currentText())
         self.settings.setValue("downsample_factor", self.factor_input.value())
         self.settings.setValue("channel_selection", self.channel_combo.currentText())
+        self.settings.sync()
+
+    def save_analysis_functions_and_parameters(self, evaluate: bool = True):
+        """Save selected analysis functions and parameters into an ini file.
+        If `evaluate` is true, the parameters are first evaluated and if there is an
+        invalid value, the saving is aborted and a message box is shown.
+        """
+        if evaluate:
+            try:
+                self.parameters_dialog.get_selected_functions_and_parameters()
+            except ValueError as exc:
+                QMessageBox.warning(self, "Invalid analysis parameter", str(exc))
+        
+        # Get the text values of the parameters for saving
+        functions, parameters = self.parameters_dialog.get_selected_functions_and_parameter_texts()
+        configuration = {
+            "functions": [analysis.key for analysis in functions],
+            "parameters": parameters,
+        }
+        # Stored as JSON
+        self.settings.setValue("analysis_functions", json.dumps(configuration))
         self.settings.sync()
 
     def on_channel_changed(self):
@@ -255,13 +328,18 @@ class SignalApp(QWidget):
         QMessageBox.critical(self, "Error in signal analysis", f"{err[0].__name__}: {err[1]}")
         self.btn.setEnabled(True)
 
-    def apply_analysis_parameters(self, functions: tuple[AnalysisFunction, ...], parameters: dict[str, dict]):
-        """Apply selected analysis functions and their parameters, then update the plot if data is available."""
+    def update_analysis_functions(self, functions: tuple[AnalysisFunction, ...], parameters: dict[str, dict]):
+        """Update and saveselected analysis functions and their parameters,
+        then update the plot if data is available.
+        """
         self.active_analyses = functions
         self.analysis_parameters = {
             analysis.key: dict(parameters.get(analysis.key, analysis.defaults))
             for analysis in self.active_analyses
         }
+        # Save selected functions and parameters
+        self.save_analysis_functions_and_parameters(evaluate=False)
+        # Plot if reader and data available
         if hasattr(self, "reader") and self.reader is not None and self.reader.data is not None:
             self.plot_data()
     
