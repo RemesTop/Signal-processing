@@ -1,9 +1,26 @@
 import sys
+import numpy as np
 from PySide6.QtWidgets import QApplication
 import pyqtgraph as pg
 from signal_reader import SignalReader
 
 from signal_classes import AnalysisResult
+
+def make_peak_tip(peak_set):
+    """Return a tooltip function for one peak set.
+
+    The peak is found by matching the hovered x to peak_set.x, so it also
+    works when pyqtgraph clips or downsamples the points.
+    """
+    props = getattr(peak_set, "properties", None) or {}
+
+    def tip(x, y, data):
+        i = int(np.argmin(np.abs(peak_set.x - x)))
+        lines = [peak_set.label, f"Time: {x:.4f} s", f"Value: {y:.4f}"]
+        for name, values in props.items():
+            lines.append(f"{name}: {values[i]:.4g}")
+        return "\n".join(lines)
+    return tip
 
 def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
     """Populate `plot_widget` with the lines and peak sets from `result`."""
@@ -32,14 +49,17 @@ def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
         plot_widget.plot(line.x, line.y,
                          pen=pg.mkPen(line.color, width=1),
                          name=line.label)
-    # Plot all peaks as points
+     # Plot all peaks as points, with a hover tooltip
     for peak_set in result.peak_sets:
-        plot_widget.plot(peak_set.x, peak_set.y,
-                         pen=None,
-                         symbol="o",
-                         symbolBrush=pg.mkBrush(None), symbolPen=pg.mkPen(peak_set.color, width=1.5),
-                         symbolSize=7,
-                         name=f"{peak_set.label} ({len(peak_set.x)})")
+        item = plot_widget.plot(peak_set.x, peak_set.y,
+                                pen=None,
+                                symbol="o",
+                                symbolBrush=pg.mkBrush(None), symbolPen=pg.mkPen(peak_set.color, width=1.5),
+                                symbolSize=7,
+                                name=f"{peak_set.label} ({len(peak_set.x)})")
+        item.scatter.opts["hoverable"] = True
+        item.scatter.opts["hoverSize"] = 11
+        item.scatter.opts["tip"] = make_peak_tip(peak_set)
 
     # Center and fit the graph view to the currently plotted channel(s)
     plot_widget.autoRange()
