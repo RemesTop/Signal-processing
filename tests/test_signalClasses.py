@@ -9,7 +9,7 @@ from signal_classes import AnalysisResult, Line, PeakSet, Slice
 WRITTEN BY ARTICIAL INTELLIGENCE (AI) - CLAUDE SONNET 5.5
 Tests for the signal_classes module. To test the signal_classes, run the following command in the terminal:
 pytest tests/test_signalClasses.py
-Last modified: 16.11.2026
+Last modified: 17.11.2026
 """
 
 
