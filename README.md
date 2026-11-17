@@ -64,8 +64,12 @@ If you set the "distance" field to `None`, most signal analysis functions curren
 
 ## Running unit tests
 
-Create 'pytest.ini" file at project root, copy paste: 
+Create a file called 'pytest.ini' at the project root, with the following contents:
+
+```ini
 [pytest]
 pythonpath = src
 testpaths = tests
-This is to configure both source path and test path. Run tests by typing "pytest" in termintal to run all tests, or "pytest test/[TEST FILENAME]" to run a specific test.
+```
+
+This is to configure both the source path and test path. Run tests by typing `pytest` in a terminal to run all tests, or `pytest tests/[TEST FILENAME]` to run a specific test.
