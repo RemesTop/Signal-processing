@@ -250,11 +250,23 @@ class FunctionsParametersDialog(QDialog):
         return selected_analyses, parameters
 
     def showEvent(self, event):
+        """Display the dialog to the right of the parent widget
+        and move the parent to the left if there's no space.
+        """
         parent = self.parentWidget()
         if parent is not None:
             parent_frame = parent.frameGeometry()
-            # Show the dialog to the right of the main window
-            self.move(parent_frame.right() + 10, parent_frame.top())
+            dialog_width = self.frameGeometry().width()
+            dialog_x = parent_frame.right() + 10
+            
+            # Move parent window if this dialog would go off screen
+            overflow = dialog_x + dialog_width - parent.screen().availableGeometry().right()
+            if overflow > 0:
+                parent.move(parent.x() - overflow, parent.y())
+                parent_frame = parent.frameGeometry()
+                dialog_x = parent_frame.right() + 10
+            
+            self.move(dialog_x, parent_frame.top())
         super().showEvent(event)
 
     def closeEvent(self, event):
