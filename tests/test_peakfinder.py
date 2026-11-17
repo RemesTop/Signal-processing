@@ -8,10 +8,10 @@ import peak_finder as pf
 
 FS = 1000  # sample rate used for synthetic test signals (Hz)
 """"
-WRITTEN BY ARTICIAL INTELLIGENCE (AI) - CLAUDE SONNET 5.5
+WRITTEN BY ARTICIAL INTELLIGENCE (AI) - CLAUDE SONNET 5.5 AND GPT-6 LUNA
 To test the peak finder, run the following command in the terminal:
 pytest tests/test_peakfinder.py
-Last modified: 16.11.2026
+Last modified: 17.11.2026
 """
 
 # --------------------------------------------------------------- helpers
@@ -537,6 +537,22 @@ class TestExtraLowpass:
         assert np.std(np.diff(out2.lines[0]["y"])) < np.std(np.diff(out.lines[0]["y"]))
 
 
+class TestBandPassFilter:
+    def test_line_is_downsampled_and_known_peaks_are_found(self, out):
+        s = make_slice()
+        pf.band_pass_filter(s, out, decimation_factor=5, low_cutoff=2, high_cutoff=60)
+        assert len(out.lines[0]["y"]) == len(s.time) // 5
+        np.testing.assert_array_equal(out.lines[0]["time"], s.time[::5])
+        assert_peaks_near(out.peak_calls[0]["time"], [0.5, 1.0, 1.5])
+
+    def test_only_requested_channels_are_processed(self, out):
+        s = make_slice(channel_indices=(1,), n_channels=2)
+        pf.band_pass_filter(s, out, decimation_factor=1, low_cutoff=2, high_cutoff=100)
+
+        assert [line["label"] for line in out.lines] == ["Channel 2"]
+        assert len(out.peak_calls) == 1
+
+
 class TestBaselineCorrection:
     KWARGS = dict(decimation_factor=10, block_size=5, baseline_window=100)
 
@@ -573,6 +589,41 @@ class TestBaselineCorrection:
         s = make_slice()
         pf.baseline_correction(s, out, decimation_factor=1, block_size=5, baseline_window=100)
         assert len(out.lines[0]["y"]) == len(s.time)
+
+
+class TestBaselineCorrectionPybaselines:
+    @pytest.mark.parametrize(("half_window", "expected_half_window"), [(17, 17), (None, 3000)])
+    def test_selected_channel_is_corrected_and_half_window_is_forwarded(
+        self, out, monkeypatch, half_window, expected_half_window
+    ):
+        s = make_slice(channel_indices=(1,), n_channels=2, offset=20.0)
+        original = s.data.copy()
+        estimator_inputs = []
+        estimator_half_windows = []
+
+        def estimate_baseline(x, half_window):
+            estimator_inputs.append(x.copy())
+            estimator_half_windows.append(half_window)
+            return np.full_like(x, 4.0), {"ok": True}
+
+        monkeypatch.setattr(pf.pybaselines.morphological, "jbcd", estimate_baseline)
+        pf.baseline_correction_pybaselines(s, out, decimation_factor=2, half_window=half_window)
+        assert estimator_half_windows == [expected_half_window]
+        assert len(out.lines) == 1
+        assert out.lines[0]["label"] == "Channel 2"
+        assert out.lines[0]["color"] == 1
+        np.testing.assert_array_equal(out.lines[0]["time"], s.time[::2])
+        np.testing.assert_allclose(out.lines[0]["y"], estimator_inputs[0] - 4.0)
+        np.testing.assert_array_equal(s.data, original)
+        assert len(out.peak_calls) == 1
+
+    def test_returns_without_processing_when_pybaselines_is_unavailable(self, out, monkeypatch, capsys):
+        monkeypatch.delitem(pf.sys.modules, "pybaselines", raising=False)
+        s = make_slice()
+        pf.baseline_correction_pybaselines(s, out)
+        assert out.lines == []
+        assert out.peak_calls == []
+        assert "pybaselines package is required" in capsys.readouterr().out
 
 
 # --------------------------------------------------------------- peak_finder class
