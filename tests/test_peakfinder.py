@@ -411,11 +411,6 @@ class TestScipyFindPeaks:
 
 
 class TestExampleAnalysis:
-    @pytest.mark.xfail(
-        raises=IndexError, strict=True,
-        reason="Bug: idx is a tuple, and numpy treats s.time[(10, 50, 100)] as "
-               "multi-dimensional indexing. Use idx = [10, 50, 100] instead. "
-               "Remove this marker once fixed.")
     def test_outputs_line_and_fixed_peaks(self, out):
         s = make_slice()
         pf.example_analysis(s, out)
@@ -574,11 +569,6 @@ class TestBaselineCorrection:
         diff = out.lines[0]["y"] - out2.lines[0]["y"]
         np.testing.assert_allclose(diff, 10.0, atol=1e-9)
 
-    @pytest.mark.xfail(
-        raises=UnboundLocalError, strict=True,
-        reason="Bug: `time` is only defined inside `if decimation_factor > 1`, "
-               "so decimation_factor=1 crashes at out.line(time, ...). "
-               "Remove this marker once fixed.")
     def test_decimation_factor_one_without_downsampling(self, out):
         s = make_slice()
         pf.baseline_correction(s, out, decimation_factor=1, block_size=5, baseline_window=100)

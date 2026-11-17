@@ -245,7 +245,7 @@ def example_analysis(s: Slice, out: AnalysisResult):
                  f"Channel {ch + 1}", color=ch)
         
         # Example of the indices of found peaks
-        idx = (10, 50, 100)
+        idx = [10, 50, 100]
         # Add peaks, which is just taking the values of the line definition above at the peak indices
         out.peaks(s.time[idx], y[idx],
                   f"Channel {ch + 1} peaks")
@@ -519,6 +519,7 @@ def baseline_correction(s: Slice, out: AnalysisResult,
     # Filter and detect peaks only for requested channel(s) to optimize performance
     for ch in s.channel_indices:
         x = s.data[:, ch]
+        time = s.time
         
         if decimation_factor > 1:
             x = butterworth_lowpass_filter(
@@ -581,6 +582,7 @@ def baseline_correction_pybaselines(s: Slice, out: AnalysisResult,
     
     for ch in s.channel_indices:
         x = s.data[:, ch]
+        time = s.time
         
         if decimation_factor > 1:
             x = butterworth_lowpass_filter(
