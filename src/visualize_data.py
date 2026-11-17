@@ -1,6 +1,7 @@
 import sys
 import numpy as np
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 import pyqtgraph as pg
 
@@ -12,7 +13,7 @@ DEFAULT_LINE_COLORS = (
     "#bc56ec", "#abd47b", "#2743e0", "#8c564b"
 )
 DEFAULT_PEAKSET_COLORS = ("#bb0000",)
-DEFAULT_PEAKSET_SYMBOLS = ("o", "t", "s", "d")
+DEFAULT_PEAKSET_SYMBOLS = ("o", "t1", "s", "d")
 
 
 def make_peak_tip(peak_set):
@@ -56,8 +57,11 @@ def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
     # Plot all lines as lines (obviously)
     for index, line in enumerate(result.lines):
         plot_widget.plot(line.x, line.y,
-                         pen=pg.mkPen(DEFAULT_LINE_COLORS[index % len(DEFAULT_LINE_COLORS)], width=1),
-                         name=line.label)
+                         pen=pg.mkPen(
+                             DEFAULT_LINE_COLORS[index % len(DEFAULT_LINE_COLORS)],
+                             width=1
+                         ),
+                         name=f"{line.label} ch.{line.channel+1}")
      # Plot all peaks as points, with a hover tooltip
     for index, peak_set in enumerate(result.peak_sets):
         item = plot_widget.plot(peak_set.x, peak_set.y,
@@ -66,7 +70,7 @@ def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
                                 symbolBrush=pg.mkBrush(None),
                                 symbolPen=pg.mkPen(DEFAULT_PEAKSET_COLORS[index % len(DEFAULT_PEAKSET_COLORS)], width=1.5),
                                 symbolSize=9,
-                                name=f"{peak_set.label} ({len(peak_set.x)})")
+                                name=f"Peaks: {peak_set.label} ch.{peak_set.channel+1} ({len(peak_set.x)})")
         item.scatter.opts["hoverable"] = True
         item.scatter.opts["hoverSize"] = 13
         item.scatter.opts["tip"] = make_peak_tip(peak_set)

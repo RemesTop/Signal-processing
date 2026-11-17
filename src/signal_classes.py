@@ -46,17 +46,19 @@ class Slice:
 
 @dataclass(frozen=True)
 class Line:
-    """A signal line with x and y points and a label."""
+    """A signal line with x and y points, a channel and a label."""
     x: np.ndarray
     y: np.ndarray
+    channel: int
     label: str
 
 
 @dataclass(frozen=True)
 class PeakSet:
-    """A set of signal peaks with x and y locations, properties, and a label."""
+    """A set of signal peaks with x and y locations, properties, a channel and a label."""
     x: np.ndarray
     y: np.ndarray
+    channel: int
     label: str
     properties: dict[str, np.ndarray] = field(default_factory=dict)
 
@@ -68,7 +70,7 @@ class AnalysisResult:
     lines: list[Line]           = field(default_factory=list)
     peak_sets: list[PeakSet]    = field(default_factory=list)
 
-    def line(self, x: np.ndarray, y: np.ndarray, label: str) -> None:
+    def line(self, x: np.ndarray, y: np.ndarray, channel: int, label: str) -> None:
         """Adds a line to this analysis result. Using the same label for multiple
         slices allows the lines to connect when showing a graph.
 
@@ -77,11 +79,11 @@ class AnalysisResult:
             y: One-dimensional array of y-coordinates.
             label: Text label for the line.
         """
-        self.lines.append(Line(x, y, label))
+        self.lines.append(Line(x, y, channel, label))
 
     # It might be more convenient if this didn't need the y parameter and just took the y values for graphing
     # from the line that's defined to correspond to these peaks. 
-    def peaks(self, x: np.ndarray, y: np.ndarray, properties: dict[str, np.ndarray] | None = None, label: str = "peaks") -> None:
+    def peaks(self, x: np.ndarray, y: np.ndarray, channel: int, label: str, properties: dict[str, np.ndarray] | None = None) -> None:
         """Adds a set of peaks to this analysis result. Using the same label for multiple
         slices allows the lines to connect when showing a graph.
 
@@ -91,7 +93,7 @@ class AnalysisResult:
             properties: Dictionary containing arrays of properties for the peaks.
             label: Text label for the peak set.
         """
-        self.peak_sets.append(PeakSet(x, y, label, properties or {}))
+        self.peak_sets.append(PeakSet(x, y, channel, label, properties or {}))
 
     @staticmethod
     def line_from_slice(slice: Slice):
@@ -101,5 +103,5 @@ class AnalysisResult:
         """
         result = AnalysisResult(slice)
         for channel in slice.channel_indices:
-            result.line(slice.time, slice.data[:, channel], label=f"Channel {channel + 1}")
+            result.line(slice.time, slice.data[:, channel], channel=channel, label=f"Channel {channel + 1}")
         return result
