@@ -179,10 +179,17 @@ class FunctionsParametersDialog(QDialog):
     def set_selected_functions_and_parameters(self,
                                               functions: Sequence[AnalysisFunction],
                                               parameters: Mapping[str, Mapping[str, object]]):
-        """Set the selected functions and their displayed parameter values."""
+        """Set the selected functions and their displayed parameter values.
+        Store all the parameters as strings for later saving.
+        """
+        # Store parameters even for functions that are not selected
+        self.stored_parameters = parameters
+        
         selected_keys = {analysis.key for analysis in functions}
+        
         for analysis in self.analyses:
             self.checkboxes[analysis.key].setChecked(analysis.key in selected_keys)
+            
             for name, field in self.fields[analysis.key].items():
                 value = parameters.get(analysis.key, {}).get(name, analysis.defaults[name])
                 field.setText(str(value))
@@ -218,14 +225,21 @@ class FunctionsParametersDialog(QDialog):
         return selected_analyses, parameters
 
     def get_selected_functions_and_parameter_texts(self) -> tuple[tuple[AnalysisFunction, ...], dict[str, dict[str, str]]]:
-        """Get the selected functions and their parameter field contents as text."""
+        """Get the selected functions and their parameter field contents
+        plus previously saved parameters as strings.
+        """
         selected_analyses = tuple(
             analysis
             for analysis in self.analyses
             if self.checkboxes[analysis.key].isChecked()
         )
         
-        parameters = {
+        # Combine the previously saved parameters and the latest inputs.
+        # The reason we combine these like this is because parameters
+        # for functions that are not selected are not evaluated
+        # (it might be weird to evaluate and show errors for parameters
+        # that are not visible)
+        parameters = self.stored_parameters | {
             analysis.key: {
                 name: field.text()
                 for name, field in self.fields[analysis.key].items()
