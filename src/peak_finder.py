@@ -241,8 +241,7 @@ def example_analysis(s: Slice, out: AnalysisResult):
         # Add line where
         # - the x value of each point is the time
         # - the y value of each point is the amplitude of the signal in this channel
-        out.line(s.time, y,
-                 f"Channel {ch + 1}", color=ch)
+        out.line(s.time, y, f"Channel {ch + 1}")
         
         # Example of the indices of found peaks
         idx = (10, 50, 100)
@@ -282,8 +281,7 @@ def raw_signal_with_peaks(s: Slice, out: AnalysisResult,
         x = s.data[:, ch]
         
         # Create line
-        out.line(s.time, x,
-                 f"Channel {ch + 1}", color=ch)
+        out.line(s.time, x, f"Channel {ch + 1}")
         
         # Find peaks
         scipy_find_peaks(out, s.time, x, ch, peak_options)
@@ -320,8 +318,7 @@ def scipy_decimation(s: Slice, out: AnalysisResult,
         x = decimate(x, decimation_factor)
         
         # Create line
-        out.line(time, x,
-                 f"Channel {ch + 1}", color=ch)
+        out.line(time, x, f"Channel {ch + 1}")
         
         # Find peaks
         scipy_find_peaks(out, time, x, ch, peak_options)
@@ -365,8 +362,7 @@ def custom_decimation(s: Slice, out: AnalysisResult,
         time = s.time[::decimation_factor]
         x = downsample(x, decimation_factor)
         
-        out.line(time, x,
-                 f"Channel {ch + 1}", color=ch)
+        out.line(time, x, f"Channel {ch + 1}")
         
         # Find peaks
         scipy_find_peaks(out, time, x, ch, peak_options)
@@ -418,8 +414,7 @@ def extra_lowpass(s: Slice, out: AnalysisResult,
             fs=s.sample_rate / decimation_factor
         )
         
-        out.line(time, x,
-                 f"Channel {ch + 1}", color=ch)
+        out.line(time, x, f"Channel {ch + 1}")
         
         # Find peaks
         scipy_find_peaks(out, time, x, ch, peak_options)
@@ -476,8 +471,7 @@ def band_pass_filter(s: Slice, out: AnalysisResult,
             fs=sample_rate
         )
 
-        out.line(time, x,
-                 f"Channel {ch + 1}", color=5)
+        out.line(time, x, f"Channel {ch + 1}")
 
         scipy_find_peaks(out, time, x, ch, peak_options)
 
@@ -539,8 +533,7 @@ def baseline_correction(s: Slice, out: AnalysisResult,
             bias=bias
         )
         
-        out.line(time, x,
-                 f"Channel {ch + 1}", color=ch)
+        out.line(time, x, f"Channel {ch + 1}")
         
         # Find peaks
         scipy_find_peaks(out, time, x, ch, peak_options)
@@ -605,8 +598,7 @@ def baseline_correction_pybaselines(s: Slice, out: AnalysisResult,
         
         x -= baseline
         
-        out.line(time, x,
-                 f"Channel {ch + 1}", color=ch)
+        out.line(time, x, f"Channel {ch + 1}")
         
         # Find peaks
         scipy_find_peaks(out, time, x, ch, peak_options)

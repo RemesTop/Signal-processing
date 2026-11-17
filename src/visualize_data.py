@@ -1,10 +1,19 @@
 import sys
 import numpy as np
+
 from PySide6.QtWidgets import QApplication
 import pyqtgraph as pg
-from signal_reader import SignalReader
 
+from signal_reader import SignalReader
 from signal_classes import AnalysisResult
+
+DEFAULT_LINE_COLORS = (
+    "#ffaa00", "#00aaff", "#f34141", "#06cf17",
+    "#bc56ec", "#abd47b", "#2743e0", "#8c564b"
+)
+DEFAULT_PEAKSET_COLORS = ("#bb0000",)
+DEFAULT_PEAKSET_SYMBOLS = ("o", "t", "s", "d")
+
 
 def make_peak_tip(peak_set):
     """Return a tooltip function for one peak set.
@@ -45,20 +54,21 @@ def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
         plot_item.legend.clear()
 
     # Plot all lines as lines (obviously)
-    for line in result.lines:
+    for index, line in enumerate(result.lines):
         plot_widget.plot(line.x, line.y,
-                         pen=pg.mkPen(line.color, width=1),
+                         pen=pg.mkPen(DEFAULT_LINE_COLORS[index % len(DEFAULT_LINE_COLORS)], width=1),
                          name=line.label)
      # Plot all peaks as points, with a hover tooltip
-    for peak_set in result.peak_sets:
+    for index, peak_set in enumerate(result.peak_sets):
         item = plot_widget.plot(peak_set.x, peak_set.y,
                                 pen=None,
-                                symbol="o",
-                                symbolBrush=pg.mkBrush(None), symbolPen=pg.mkPen(peak_set.color, width=1.5),
-                                symbolSize=7,
+                                symbol=DEFAULT_PEAKSET_SYMBOLS[index % len(DEFAULT_PEAKSET_SYMBOLS)],
+                                symbolBrush=pg.mkBrush(None),
+                                symbolPen=pg.mkPen(DEFAULT_PEAKSET_COLORS[index % len(DEFAULT_PEAKSET_COLORS)], width=1.5),
+                                symbolSize=9,
                                 name=f"{peak_set.label} ({len(peak_set.x)})")
         item.scatter.opts["hoverable"] = True
-        item.scatter.opts["hoverSize"] = 11
+        item.scatter.opts["hoverSize"] = 13
         item.scatter.opts["tip"] = make_peak_tip(peak_set)
 
     # Center and fit the graph view to the currently plotted channel(s)
