@@ -3,11 +3,28 @@ from collections.abc import Mapping, Sequence
 
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QLineEdit, QFrame,
-    QMessageBox, QPushButton, QScrollArea, QToolButton, QVBoxLayout, QWidget
+    QCheckBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QFrame, QMessageBox, QPushButton, QScrollArea, QToolButton, QVBoxLayout,
+    QWidget
 )
 
 from peak_finder import AnalysisFunction
+
+
+class _CheckboxLabel(QLabel):
+    """QLabel that emits a `clicked` signal when it's clicked so it can be
+    connected to a CheckBox.
+    """
+    clicked = Signal()
+
+    def mouseReleaseEvent(self, event):
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.rect().contains(event.position().toPoint())
+        ):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
 
 class FunctionsParametersDialog(QDialog):
     """Dialog for selecting signal analysis functions and editing their parameters.
@@ -42,16 +59,31 @@ class FunctionsParametersDialog(QDialog):
         
         # Add checkbox for each function
         for analysis in self.analyses:
-            checkbox = QCheckBox(analysis.title)
+            checkbox = QCheckBox()
             checkbox.setChecked(analysis.key in selected_keys)
             checkbox.setToolTip(analysis.function.__doc__) # Show the docstring as the tooltip
-            
+
+            # Separate label so the text can be wrapped
+            label = _CheckboxLabel(analysis.title)
+            label.setWordWrap(True)
+            label.setBuddy(checkbox)
+            label.setToolTip(analysis.function.__doc__)
+            label.clicked.connect(checkbox.click)
+            checkbox.setAccessibleName(analysis.title)
+
+            checkbox_row = QWidget()
+            checkbox_row_layout = QHBoxLayout(checkbox_row)
+            checkbox_row_layout.setContentsMargins(0, 0, 0, 0)
+            checkbox_row_layout.addWidget(checkbox, 0, Qt.AlignmentFlag.AlignTop)
+            checkbox_row_layout.addWidget(label, 1)
+
             self.checkboxes[analysis.key] = checkbox
-            funcs_layout.addWidget(checkbox)
+            funcs_layout.addWidget(checkbox_row)
         
         funcs_layout.addStretch()
 
         funcs_scroll = QScrollArea()
+        funcs_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         funcs_scroll.setWidgetResizable(True)
         funcs_scroll.setFrameShape(QFrame.NoFrame)
         funcs_scroll.setFixedWidth(self.FUNCS_AREA_WIDTH)
@@ -147,10 +179,17 @@ class FunctionsParametersDialog(QDialog):
     def set_selected_functions_and_parameters(self,
                                               functions: Sequence[AnalysisFunction],
                                               parameters: Mapping[str, Mapping[str, object]]):
-        """Set the selected functions and their displayed parameter values."""
+        """Set the selected functions and their displayed parameter values.
+        Store all the parameters as strings for later saving.
+        """
+        # Store parameters even for functions that are not selected
+        self.stored_parameters = parameters
+        
         selected_keys = {analysis.key for analysis in functions}
+        
         for analysis in self.analyses:
             self.checkboxes[analysis.key].setChecked(analysis.key in selected_keys)
+            
             for name, field in self.fields[analysis.key].items():
                 value = parameters.get(analysis.key, {}).get(name, analysis.defaults[name])
                 field.setText(str(value))
@@ -186,14 +225,21 @@ class FunctionsParametersDialog(QDialog):
         return selected_analyses, parameters
 
     def get_selected_functions_and_parameter_texts(self) -> tuple[tuple[AnalysisFunction, ...], dict[str, dict[str, str]]]:
-        """Get the selected functions and their parameter field contents as text."""
+        """Get the selected functions and their parameter field contents
+        plus previously saved parameters as strings.
+        """
         selected_analyses = tuple(
             analysis
             for analysis in self.analyses
             if self.checkboxes[analysis.key].isChecked()
         )
         
-        parameters = {
+        # Combine the previously saved parameters and the latest inputs.
+        # The reason we combine these like this is because parameters
+        # for functions that are not selected are not evaluated
+        # (it might be weird to evaluate and show errors for parameters
+        # that are not visible)
+        parameters = self.stored_parameters | {
             analysis.key: {
                 name: field.text()
                 for name, field in self.fields[analysis.key].items()
@@ -204,11 +250,23 @@ class FunctionsParametersDialog(QDialog):
         return selected_analyses, parameters
 
     def showEvent(self, event):
+        """Display the dialog to the right of the parent widget
+        and move the parent to the left if there's no space.
+        """
         parent = self.parentWidget()
         if parent is not None:
             parent_frame = parent.frameGeometry()
-            # Show the dialog to the right of the main window
-            self.move(parent_frame.right() + 10, parent_frame.top())
+            dialog_width = self.frameGeometry().width()
+            dialog_x = parent_frame.right() + 10
+            
+            # Move parent window if this dialog would go off screen
+            overflow = dialog_x + dialog_width - parent.screen().availableGeometry().right()
+            if overflow > 0:
+                parent.move(parent.x() - overflow, parent.y())
+                parent_frame = parent.frameGeometry()
+                dialog_x = parent_frame.right() + 10
+            
+            self.move(dialog_x, parent_frame.top())
         super().showEvent(event)
 
     def closeEvent(self, event):

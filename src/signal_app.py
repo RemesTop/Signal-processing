@@ -28,7 +28,7 @@ class SignalApp(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Signal app")
-        self.resize(800, 600)
+        self.resize(1200, 700)
 
         # Options are saved to settings.ini and persist when restarting the app
         settings_file = Path(__file__).resolve().parent / "settings.ini"
