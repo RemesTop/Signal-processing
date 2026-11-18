@@ -8,7 +8,7 @@ from signal_converter import SignalConverter
 WRITTEN BY ARTICIAL INTELLIGENCE (AI) - CLAUDE SONNET 5.5
 Tests for the signal_converter module. To test the signal_converter, run the following command in the terminal:
 pytest tests/test_signal_converter.py
-Last modified: 17.11.2026
+Last modified: 18.11.2026
 """
 
 
@@ -134,10 +134,15 @@ class TestErrors:
         with pytest.raises(StopIteration):
             SignalConverter().start(src, target)
 
-    def test_header_only_file_cannot_be_memmapped(self, tmp_path, target):
+    def test_header_only_file_produces_no_samples(self, tmp_path, target):
         src = write_csv(tmp_path / "s.csv", [])
-        with pytest.raises((ValueError, OSError)):
-            SignalConverter().start(src, target)
+        progress = FakeSignal()
+        assert SignalConverter().start(src, target, progress_callback=progress) is True
+        assert target.exists()
+    # numpy may pad an empty memmap file to 1 byte, so check samples, not file size
+        assert np.fromfile(target, dtype=np.int16).size == 0
+        assert progress.values[0] == 0
+        assert progress.values[-1] == 100
 
     def test_non_numeric_value_raises_value_error(self, tmp_path, target):
         src = write_csv(tmp_path / "s.csv", None, raw_lines=["1,2", "a,b"])
