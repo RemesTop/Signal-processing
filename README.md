@@ -61,3 +61,15 @@ The graph will now display the signal in a time-amplitude graph. Found peaks are
 Check "View" > "Analysis functions and parameters" to select which functions process the signal and to edit their parameters. The values of the parameters can be `None` for no value or the default value, simple numerical values, calculations, or a tuple like `(10, None)` or `(-5, 5)` for the parameters that support that. Click "Apply" to re-process the current signal and update the graph. Doing that will also save the selected functions and the parameters so they persist after closing the app.
 
 If you set the "distance" field to `None`, most signal analysis functions currently will use a minimum distance of 5 milliseconds between peaks (adjusted for the decimation/downsampling).
+
+## Running unit tests
+
+Create a file called 'pytest.ini' at the project root, with the following contents:
+
+```ini
+[pytest]
+pythonpath = src
+testpaths = tests
+```
+
+This is to configure both the source path and test path. Run tests by typing `pytest` in a terminal to run all tests, or `pytest tests/[TEST FILENAME]` to run a specific test.

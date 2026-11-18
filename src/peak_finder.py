@@ -1,12 +1,18 @@
 """
 Functions used to process a signal data set and find peaks in it.
 """
-import numpy as np
-from scipy import ndimage
-from scipy.signal import find_peaks, peak_widths, butter, sosfiltfilt, decimate
 from dataclasses import dataclass
 from collections.abc import Callable
 from typing import TypeVar
+import sys
+
+import numpy as np
+from scipy import ndimage
+from scipy.signal import find_peaks, peak_widths, butter, sosfiltfilt, decimate
+try:
+    import pybaselines
+except ImportError:
+    print("Failed to import pybaselines")
 
 from downsampler import downsample
 from signal_constants import DEFAULT_SAMPLE_RATE
@@ -86,8 +92,9 @@ def butterworth_lowpass_filter(
     order: int = 4,
 ) -> np.ndarray:
     """
-    Low-pass filter that keeps the cutoff below the the output Nyquist
-    frequency based on `decimation_factor` and `nyquist_cutoff_multiplier`.
+    Low-pass filter that keeps the cutoff below the output Nyquist
+    frequency based on `decimation_factor` and `nyquist_cutoff_multiplier`
+    when `cutoff` is `None`.
     """
     output_nyquist = fs / (2 * decimation_factor)
     max_cutoff = nyquist_cutoff_multiplier * output_nyquist
@@ -95,6 +102,22 @@ def butterworth_lowpass_filter(
 
     sos = butter(order, cutoff, btype="low", fs=fs, output="sos")
     
+    # Default signal padding from sosfiltfilt
+    default_padlen = 3 * (2 * len(sos) + 1 - min((sos[:, 2] == 0).sum(),
+                                                 (sos[:, 5] == 0).sum()))
+    return sosfiltfilt(sos, x, padlen=min(default_padlen, x.size - 1))
+
+
+def butterworth_bandpass_filter(
+    x: np.ndarray,
+    low_cutoff: float,
+    high_cutoff: float,
+    fs: float = DEFAULT_SAMPLE_RATE,
+    order: int = 4,
+) -> np.ndarray:
+    """Keep signal frequencies between `low_cutoff` and `high_cutoff`."""
+    sos = butter(order, (low_cutoff, high_cutoff), btype="bandpass", fs=fs, output="sos")
+
     # Default signal padding from sosfiltfilt
     default_padlen = 3 * (2 * len(sos) + 1 - min((sos[:, 2] == 0).sum(),
                                                  (sos[:, 5] == 0).sum()))
@@ -222,7 +245,7 @@ def example_analysis(s: Slice, out: AnalysisResult):
                  f"Channel {ch + 1}", color=ch)
         
         # Example of the indices of found peaks
-        idx = (10, 50, 100)
+        idx = [10, 50, 100]
         # Add peaks, which is just taking the values of the line definition above at the peak indices
         out.peaks(s.time[idx], y[idx],
                   f"Channel {ch + 1} peaks")
@@ -403,6 +426,63 @@ def extra_lowpass(s: Slice, out: AnalysisResult,
 
 
 @analysis_function(
+    "Band-pass filter",
+    (
+        AnalysisParameter("decimation_factor", 10),
+        AnalysisParameter("low_cutoff", 10, "Low cutoff (Hz)"),
+        AnalysisParameter("high_cutoff", 1000, "High cutoff (Hz)"),
+        *_find_peaks_parameters(
+            prominence=40)
+    ),
+)
+def band_pass_filter(s: Slice, out: AnalysisResult,
+                     decimation_factor: int = 10,
+                     low_cutoff: float = 10,
+                     high_cutoff: float = 1000,
+                     **peak_options):
+    """Anti-alias, downsample, band-pass filter, and detect peaks.
+    Don't downsample the signal before passing to this function.
+
+    **Line:**<br>
+    Downsampled by the specified factor using `butterworth_lowpass_filter`
+    and `downsampler.downsample`, then band-pass filtered between
+    `low_cutoff` and `high_cutoff` Hz.
+
+    **Peaks:**<br>
+    `scipy.signal.find_peaks` with a 5 ms minimum peak distance and 40 prominence.
+    """
+    peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate) / decimation_factor))
+    peak_options.setdefault("prominence", 40)
+
+    for ch in s.channel_indices:
+        x = s.data[:, ch]
+        time = s.time
+        sample_rate = s.sample_rate
+
+        if decimation_factor > 1:
+            x = butterworth_lowpass_filter(
+                x,
+                decimation_factor=decimation_factor,
+                fs=s.sample_rate
+            )
+            time = s.time[::decimation_factor]
+            x = downsample(x, decimation_factor)
+            sample_rate /= decimation_factor
+
+        x = butterworth_bandpass_filter(
+            x,
+            low_cutoff=low_cutoff,
+            high_cutoff=high_cutoff,
+            fs=sample_rate
+        )
+
+        out.line(time, x,
+                 f"Channel {ch + 1}", color=5)
+
+        scipy_find_peaks(out, time, x, ch, peak_options)
+
+
+@analysis_function(
     "Baseline correction",
     (
         AnalysisParameter("decimation_factor", 10),
@@ -439,6 +519,7 @@ def baseline_correction(s: Slice, out: AnalysisResult,
     # Filter and detect peaks only for requested channel(s) to optimize performance
     for ch in s.channel_indices:
         x = s.data[:, ch]
+        time = s.time
         
         if decimation_factor > 1:
             x = butterworth_lowpass_filter(
@@ -458,6 +539,73 @@ def baseline_correction(s: Slice, out: AnalysisResult,
             baseline_window=baseline_window,
             bias=bias
         )
+        
+        out.line(time, x,
+                 f"Channel {ch + 1}", color=ch)
+        
+        # Find peaks
+        scipy_find_peaks(out, time, x, ch, peak_options)
+
+
+@analysis_function(
+    "Baseline correction pybaselines",
+    (
+        AnalysisParameter("decimation_factor", 10),
+        AnalysisParameter("half_window", 960),
+        *_find_peaks_parameters(
+            prominence=40)
+    ),
+)
+def baseline_correction_pybaselines(s: Slice, out: AnalysisResult,
+                                    decimation_factor: int = 10,
+                                    half_window: int = 960,
+                                    **peak_options):
+    """Low-pass filter, downsample, and baseline correction with `pybaselines`. Then SciPy peak finding.
+    Don't downsample the signal before passing to this function.
+
+    **Line:**<br>
+    Downsampled by a factor of 10 using `butterworth_lowpass_filter` and
+    `downsampler.downsample`, then baseline corrected using `pybaselines.morphological.imor`.
+
+    **Peaks:**<br>
+    `scipy.signal.find_peaks` with a 5 ms minimum peak distance and 40 prominence.
+    """
+    if not "pybaselines" in sys.modules:
+        print("The pybaselines package is required to run baseline_correction_pybaselines")
+        return
+    
+    peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate) / decimation_factor))
+    peak_options.setdefault("prominence", 40)
+    
+    if half_window is None:
+        half_window = 6_000 // decimation_factor
+    
+    for ch in s.channel_indices:
+        x = s.data[:, ch]
+        time = s.time
+        
+        if decimation_factor > 1:
+            x = butterworth_lowpass_filter(
+                x,
+                decimation_factor=decimation_factor,
+                cutoff=None,
+                fs=s.sample_rate
+            )
+            
+            time = s.time[::decimation_factor]
+            x = downsample(x, decimation_factor)
+            
+        # Subtract the baseline
+        # Other functions can also be tested: https://pybaselines.readthedocs.io/en/latest/algorithms/index.html
+        # If half_window is left to None, the function will optimize and select it itself, but it will be much slower
+        
+        # baseline, params = pybaselines.morphological.imor(x, half_window=half_window)
+        baseline, params = pybaselines.morphological.jbcd(x, half_window=half_window)
+        # baseline, params = pybaselines.whittaker.lsrpls(x)
+        
+        print(params) # TEMP print for the parameters
+        
+        x -= baseline
         
         out.line(time, x,
                  f"Channel {ch + 1}", color=ch)
