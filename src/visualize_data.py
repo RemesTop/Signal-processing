@@ -19,6 +19,48 @@ DEFAULT_PEAKSET_SYMBOLS = {
 }
 
 
+class TimeAxisItem(pg.AxisItem):
+    """Bottom time axis showing seconds for short ranges and m:ss / h:mm:ss for longer ranges."""
+
+    _TIME_STEPS = (15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.enableAutoSIPrefix(False)
+
+    def tickSpacing(self, minVal: float, maxVal: float, size: float):
+        span = abs(maxVal - minVal)
+        if span < 60:
+            return super().tickSpacing(minVal, maxVal, size)
+        target = span / max(3.0, size / 90.0)
+        major = next((s for s in self._TIME_STEPS if s >= target), self._TIME_STEPS[-1])
+        minor = major / 5 if major in (15, 300, 600, 900) else major / 4
+        return [(major, 0), (minor, 0)]
+
+    def tickStrings(self, values, scale, spacing):
+        if not values:
+            return []
+        decimals = max(0, min(6, int(np.ceil(-np.log10(spacing))))) if spacing > 0 else 0
+        max_abs = max(abs(v) for v in values)
+        if max_abs < 60:
+            return [f"{v:.{decimals}f} s" for v in values]
+
+        show_hours = max_abs >= 3600
+        width = 2 + (decimals + 1 if decimals else 0)
+        labels = []
+        for v in values:
+            sign = "-" if v < 0 else ""
+            total = round(abs(v), decimals)
+            hours, rem = divmod(total, 3600)
+            minutes, secs = divmod(rem, 60)
+            sec_str = f"{secs:0{width}.{decimals}f}"
+            if show_hours:
+                labels.append(f"{sign}{int(hours)}:{int(minutes):02d}:{sec_str}")
+            else:
+                labels.append(f"{sign}{int(total // 60)}:{sec_str}")
+        return labels
+
+
 def make_peak_tip(peak_set):
     """Return a tooltip function for one peak set.
 

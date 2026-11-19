@@ -12,7 +12,7 @@ from PySide6.QtCore import QSettings, QThreadPool, QTimer
 import pyqtgraph as pg
 from signal_reader import SignalReader, convert_csv_files
 from worker import Worker
-from visualize_data import plot_signal, set_plot_downsampling
+from visualize_data import TimeAxisItem, plot_signal, set_plot_downsampling
 from signal_classes import AnalysisResult, Slice
 from functions_parameters_dialog import FunctionsParametersDialog
 from peak_finder import ANALYSIS_FUNCTIONS, AnalysisFunction
@@ -77,24 +77,20 @@ class SignalApp(QWidget):
         self.browse_btn = QPushButton("Browse")
         self.browse_btn.clicked.connect(self.browse_file)
 
-        # 2. Button to open the analysis functions & parameters menu
-        self.customize_btn = QPushButton("Customize")
-        self.customize_btn.clicked.connect(self.open_customize_dialog)
-
-        # 3. Dropdown for channel selection (restricting channels improves performance)
+        # 2. Dropdown for channel selection (restricting channels improves performance)
         self.channel_combo = QComboBox()
         self.channel_combo.addItems(["Both channels", "Channel 1", "Channel 2"])
         self.channel_combo.setCurrentText("Both channels")
         self.channel_combo.currentIndexChanged.connect(self.on_channel_changed)
 
-        # 4. Visualize Data button (When the button is pressed)
+        # 3. Visualize Data button (When the button is pressed)
         self.btn = QPushButton("Run")
         self.btn.clicked.connect(self.visualize)
 
         # Plot widget
-        self.plot_widget = pg.PlotWidget()
+        self.plot_widget = pg.PlotWidget(axisItems={"bottom": TimeAxisItem(orientation="bottom")})
         self.plot_widget.showGrid(x=True, y=True)
-        self.plot_widget.setLabel("bottom", "Time", units="s")
+        self.plot_widget.setLabel("bottom", "Time")
         self.plot_widget.setLabel("left", "Reading")
         self.plot_widget.setTitle(" ")
         view_box: pg.ViewBox = self.plot_widget.getViewBox()
@@ -121,7 +117,6 @@ class SignalApp(QWidget):
         top_layout = QHBoxLayout()
         top_layout.addWidget(self.file_input)
         top_layout.addWidget(self.browse_btn)
-        top_layout.addWidget(self.customize_btn)
         top_layout.addWidget(self.channel_combo)
         top_layout.addWidget(self.btn)
 
@@ -132,12 +127,6 @@ class SignalApp(QWidget):
 
         # Restore saved settings on startup
         self.load_settings()
-
-    def open_customize_dialog(self):
-        """Open and focus the analysis functions and parameters dialog."""
-        self.action_param_window.setChecked(True)
-        self.parameters_dialog.raise_()
-        self.parameters_dialog.activateWindow()
 
     def _on_x_range_changed(self, _view_box: pg.ViewBox, x_range):
         """Schedule a slice prefetch before the user reaches the edge of the loaded range."""

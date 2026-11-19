@@ -159,7 +159,7 @@ class FunctionsParametersDialog(QDialog):
         self.max_slice_points_spinbox.setToolTip(
             "Maximum number of raw samples loaded and analyzed per slice on large files (arrows step by ±10%)"
         )
-        general_form.addRow("Max points per slice", self.max_slice_points_spinbox)
+        general_form.addRow("Max points visible", self.max_slice_points_spinbox)
 
         remove_invisible_tooltip = (
             "Auto-downsample plotted curves to screen resolution (peak mode) for better performance"
