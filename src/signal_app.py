@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QComboBox,
-    QPushButton, QSpinBox, QFileDialog, QMenuBar, QMessageBox, QLabel
+    QPushButton, QFileDialog, QMenuBar, QMessageBox
 )
 from PySide6.QtCore import QSettings, QThreadPool, QTimer
 import pyqtgraph as pg
@@ -68,22 +68,17 @@ class SignalApp(QWidget):
         self.browse_btn = QPushButton("Browse")
         self.browse_btn.clicked.connect(self.browse_file)
 
-        # 2. Dropdown for downsample method
-        self.combo = QComboBox()
-        self.combo.addItems(["max points", "decimation", "none"])
+        # 2. Button to open the analysis functions & parameters menu
+        self.customize_btn = QPushButton("Customize")
+        self.customize_btn.clicked.connect(self.open_customize_dialog)
 
-        # 3. Number input for downsample factor
-        self.factor_input = QSpinBox()
-        self.factor_input.setRange(1, 100000)
-        self.factor_input.setValue(5)
-
-        # 4. Dropdown for channel selection (restricting channels improves performance)
+        # 3. Dropdown for channel selection (restricting channels improves performance)
         self.channel_combo = QComboBox()
         self.channel_combo.addItems(["Both channels", "Channel 1", "Channel 2"])
         self.channel_combo.setCurrentText("Both channels")
         self.channel_combo.currentIndexChanged.connect(self.on_channel_changed)
 
-        # 5. Visualize Data button (When the button is pressed)
+        # 4. Visualize Data button (When the button is pressed)
         self.btn = QPushButton("Run")
         self.btn.clicked.connect(self.visualize)
 
@@ -98,9 +93,12 @@ class SignalApp(QWidget):
         self.loaded_range: tuple[float, float] | None = None
         self._analysis_request_id = 0
         self._analysis_running = False
+        self._analysis_worker = None
         self.total_peak_count: int | None = None
+        self.counted_peaks_so_far = 0
         self._peak_count_request_id = 1
         self._peak_count_started_id = 0
+        self._peak_count_worker = None
         self.pan_timer = QTimer(self)
         self.pan_timer.setSingleShot(True)
         self.pan_timer.setInterval(50)
@@ -109,14 +107,12 @@ class SignalApp(QWidget):
         # Keep y-axis fixed while panning x; prefetch slices on large files
         view_box.setMouseEnabled(x=True, y=False)
         view_box.sigXRangeChanged.connect(self._on_x_range_changed)
-        self.factor_input.setPrefix("Factor: ")
 
         # Layout
         top_layout = QHBoxLayout()
         top_layout.addWidget(self.file_input)
         top_layout.addWidget(self.browse_btn)
-        top_layout.addWidget(self.combo)
-        top_layout.addWidget(self.factor_input)
+        top_layout.addWidget(self.customize_btn)
         top_layout.addWidget(self.channel_combo)
         top_layout.addWidget(self.btn)
 
@@ -127,6 +123,12 @@ class SignalApp(QWidget):
 
         # Restore saved settings on startup
         self.load_settings()
+
+    def open_customize_dialog(self):
+        """Open and focus the analysis functions and parameters dialog."""
+        self.action_param_window.setChecked(True)
+        self.parameters_dialog.raise_()
+        self.parameters_dialog.activateWindow()
 
     def _on_x_range_changed(self, _view_box: pg.ViewBox, x_range):
         """Schedule a slice prefetch before the user reaches the edge of the loaded range."""
@@ -174,13 +176,6 @@ class SignalApp(QWidget):
         saved_file = self.settings.value("file_path", "")
         if saved_file:
             self.file_input.setText(str(saved_file))
-
-        saved_method = self.settings.value("downsample_method", "")
-        if saved_method:
-            self.combo.setCurrentText(str(saved_method))
-
-        saved_factor = self.settings.value("downsample_factor", 2)
-        self.factor_input.setValue(int(saved_factor))
 
         saved_channel = self.settings.value("channel_selection", "Both channels")
         if saved_channel in ["Both channels", "Channel 1", "Channel 2"]:
@@ -245,8 +240,6 @@ class SignalApp(QWidget):
         For those, use `save_analysis_functions_and_parameters`.
         """
         self.settings.setValue("file_path", self.file_input.text())
-        self.settings.setValue("downsample_method", self.combo.currentText())
-        self.settings.setValue("downsample_factor", self.factor_input.value())
         self.settings.setValue("channel_selection", self.channel_combo.currentText())
         self.settings.sync()
 
@@ -341,7 +334,10 @@ class SignalApp(QWidget):
         """Update the plot title with total file duration, total peaks, and active functions."""
         total_duration = self.reader.total_samples / self.reader.sample_rate
         duration_str = self._format_duration(total_duration)
-        peaks_str = str(self.total_peak_count) if self.total_peak_count is not None else "counting..."
+        if self.total_peak_count is not None:
+            peaks_str = str(self.total_peak_count)
+        else:
+            peaks_str = f"{self.counted_peaks_so_far}..."
         analysis_names = ", ".join(analysis.title for analysis in self.active_analyses)
         self.plot_widget.setTitle(
             f"File duration: {duration_str}, Peaks: {peaks_str}, Functions: {analysis_names}"
@@ -350,11 +346,12 @@ class SignalApp(QWidget):
     def _invalidate_total_peak_count(self):
         """Reset cached whole-file peak count and cancel any in-flight counting worker."""
         self.total_peak_count = None
+        self.counted_peaks_so_far = 0
         self._peak_count_request_id += 1
 
     def _count_total_peaks(
         self, count_id, reader, start_from_sec, initial_count,
-        method, factor, channel_choice, analyses, parameters,
+        channel_choice, analyses, parameters, progress_callback=None,
     ):
         """Count total peaks across the entire file in bounded chunks."""
         total_duration = reader.total_samples / reader.sample_rate
@@ -367,7 +364,7 @@ class SignalApp(QWidget):
             if count_id != self._peak_count_request_id:
                 return count_id, None
             end = min(total_duration, t + chunk_sec)
-            signal_slice = reader.get_slice(t, end, downsample_factor=factor, downsample=method)
+            signal_slice = reader.get_slice(t, end)
             signal_slice = Slice(signal_slice.time, signal_slice.data, channel_indices=channel_indices)
             result = AnalysisResult(signal_slice)
             for analysis in analyses:
@@ -377,9 +374,18 @@ class SignalApp(QWidget):
                     **analysis.parameters_for_call(parameters[analysis.key])
                 )
             total_peaks += sum(len(peak_set.x) for peak_set in result.peak_sets)
+            if progress_callback:
+                progress_callback.emit(float(total_peaks))
             t = end
 
         return count_id, total_peaks
+
+    def _on_total_peak_count_progress(self, count_id: int, peaks_so_far: float):
+        """Update the live peak count in the title as chunks finish."""
+        if count_id != self._peak_count_request_id or self.total_peak_count is not None:
+            return
+        self.counted_peaks_so_far = max(self.counted_peaks_so_far, int(peaks_so_far))
+        self._update_plot_title()
 
     def _on_total_peak_count_finished(self, payload):
         """Update the title once whole-file peak counting completes."""
@@ -387,15 +393,20 @@ class SignalApp(QWidget):
         if count_id != self._peak_count_request_id or total_peaks is None:
             return
         self.total_peak_count = total_peaks
+        self._peak_count_worker = None
         self._update_plot_title()
+
+    def _on_total_peak_count_error(self, _err):
+        """Clear counting state if background peak counting fails."""
+        self._peak_count_worker = None
 
     def _run_analysis(
         self, request_id, start_sec, end_sec, reset_x_range, reset_y_range,
-        method, factor, channel_choice, parameters,
+        channel_choice, parameters,
     ):
         """Run the selected signal analysis functions for a slice of the current `SignalReader`'s data."""
         # Background worker task: slices data and runs signal analysis
-        signal_slice = self.reader.get_slice(start_sec, end_sec, downsample_factor=factor, downsample=method)
+        signal_slice = self.reader.get_slice(start_sec, end_sec)
         channel_indices = self._channel_indices_for(channel_choice)
         signal_slice = Slice(signal_slice.time, signal_slice.data, channel_indices=channel_indices)
 
@@ -416,8 +427,6 @@ class SignalApp(QWidget):
         reset_y_range: bool = True,
     ):
         """Run signal analysis and plotting in a background thread."""
-        method = self.combo.currentText()
-        factor = self.factor_input.value()
         channel_choice = self.channel_combo.currentText()
         parameters = self.analysis_parameters
 
@@ -440,10 +449,11 @@ class SignalApp(QWidget):
         worker = Worker(
             self._run_analysis,
             request_id, start_sec, end_sec, reset_x_range, reset_y_range,
-            method, factor, channel_choice, parameters,
+            channel_choice, parameters,
         )
         worker.signals.result.connect(self._on_analysis_finished)
         worker.signals.error.connect(self._on_analysis_error)
+        self._analysis_worker = worker
         QThreadPool.globalInstance().start(worker)
 
     def _on_analysis_finished(self, payload):
@@ -453,6 +463,7 @@ class SignalApp(QWidget):
         if request_id != self._analysis_request_id:
             return
         self._analysis_running = False
+        self._analysis_worker = None
         self.loaded_range = loaded_range
 
         slice_peak_count = sum(len(peak_set.x) for peak_set in result.peak_sets)
@@ -460,25 +471,31 @@ class SignalApp(QWidget):
 
         if self.reader.total_samples <= self.MAX_SLICE_POINTS:
             self.total_peak_count = slice_peak_count
-        elif self.total_peak_count is None and self._peak_count_started_id != self._peak_count_request_id:
-            # Count remaining chunks in the background for the total whole-file peak count
-            self._peak_count_started_id = self._peak_count_request_id
-            start_from = loaded_range[1] if loaded_range[0] <= 1e-9 else 0.0
-            initial_count = slice_peak_count if loaded_range[0] <= 1e-9 else 0
-            count_worker = Worker(
-                self._count_total_peaks,
-                self._peak_count_request_id,
-                self.reader,
-                start_from,
-                initial_count,
-                self.combo.currentText(),
-                self.factor_input.value(),
-                self.channel_combo.currentText(),
-                self.active_analyses,
-                {k: dict(v) for k, v in self.analysis_parameters.items()},
-            )
-            count_worker.signals.result.connect(self._on_total_peak_count_finished)
-            QThreadPool.globalInstance().start(count_worker)
+        else:
+            # Show already-detected peaks immediately while background counting finishes
+            self.counted_peaks_so_far = max(self.counted_peaks_so_far, slice_peak_count)
+            if self.total_peak_count is None and self._peak_count_started_id != self._peak_count_request_id:
+                count_id = self._peak_count_request_id
+                self._peak_count_started_id = count_id
+                start_from = loaded_range[1] if loaded_range[0] <= 1e-9 else 0.0
+                initial_count = slice_peak_count if loaded_range[0] <= 1e-9 else 0
+                count_worker = Worker(
+                    self._count_total_peaks,
+                    count_id,
+                    self.reader,
+                    start_from,
+                    initial_count,
+                    self.channel_combo.currentText(),
+                    self.active_analyses,
+                    {k: dict(v) for k, v in self.analysis_parameters.items()},
+                )
+                count_worker.signals.progress.connect(
+                    lambda val, cid=count_id: self._on_total_peak_count_progress(cid, val)
+                )
+                count_worker.signals.result.connect(self._on_total_peak_count_finished)
+                count_worker.signals.error.connect(self._on_total_peak_count_error)
+                self._peak_count_worker = count_worker
+                QThreadPool.globalInstance().start(count_worker)
 
         self._update_plot_title()
         # Show the parameter editing dialog on initial load
