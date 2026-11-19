@@ -12,7 +12,7 @@ from PySide6.QtCore import QSettings, QThreadPool, QTimer
 import pyqtgraph as pg
 from signal_reader import SignalReader, convert_csv_files
 from worker import Worker
-from visualize_data import plot_signal
+from visualize_data import plot_signal, set_plot_downsampling
 from signal_classes import AnalysisResult, Slice
 from functions_parameters_dialog import FunctionsParametersDialog
 from peak_finder import ANALYSIS_FUNCTIONS, AnalysisFunction
@@ -42,8 +42,17 @@ class SignalApp(QWidget):
         self.active_analyses = (self.DEFAULT_ANALYSIS,)
         # Editable parameters for each analysis function
         self.analysis_parameters = {analysis.key: analysis.defaults for analysis in self.active_analyses}
+        # General slicing and display options
+        self.max_slice_points = self.MAX_SLICE_POINTS
+        self.remove_invisible_points = True
         # Dialog for editing the parameters
-        self.parameters_dialog = FunctionsParametersDialog(tuple(ANALYSIS_FUNCTIONS.values()), self.active_analyses, self)
+        self.parameters_dialog = FunctionsParametersDialog(
+            tuple(ANALYSIS_FUNCTIONS.values()),
+            self.active_analyses,
+            self,
+            default_max_slice_points=self.max_slice_points,
+            default_remove_invisible_points=self.remove_invisible_points,
+        )
         self.parameters_dialog.changes_applied.connect(self.update_analysis_functions)
         self.parameters_dialog.closed.connect(lambda: self.action_param_window.setChecked(False))
 
@@ -137,12 +146,12 @@ class SignalApp(QWidget):
             or self.reader is None
             or self.reader.data is None
             or self.loaded_range is None
-            or self.reader.total_samples <= self.MAX_SLICE_POINTS
+            or self.reader.total_samples <= self.max_slice_points
         ):
             return
 
         total_duration = self.reader.total_samples / self.reader.sample_rate
-        window_sec = min(total_duration, self.MAX_SLICE_POINTS / self.reader.sample_rate)
+        window_sec = min(total_duration, self.max_slice_points / self.reader.sample_rate)
         margin = window_sec * self.PREFETCH_MARGIN_RATIO
         view_min = max(0.0, x_range[0])
         view_max = min(total_duration, x_range[1])
@@ -154,22 +163,35 @@ class SignalApp(QWidget):
         if (need_left or need_right) and not self.pan_timer.isActive():
             self.pan_timer.start()
 
-    def _reload_visible_slice(self):
+    def _reload_visible_slice(
+        self,
+        force: bool = False,
+        reset_y_range: bool = False,
+        fit_x_range: bool = False,
+        show_loading: bool = False,
+    ):
         """Load a new slice centered on the current X view range."""
         if (
-            self._analysis_running
+            (self._analysis_running and not force)
             or not hasattr(self, "reader")
             or self.reader is None
             or self.reader.data is None
         ):
             return
         total_duration = self.reader.total_samples / self.reader.sample_rate
-        window_sec = min(total_duration, self.MAX_SLICE_POINTS / self.reader.sample_rate)
+        window_sec = min(total_duration, self.max_slice_points / self.reader.sample_rate)
         x_min, x_max = self.plot_widget.getViewBox().viewRange()[0]
         center = (x_min + x_max) / 2
         start_sec = max(0.0, min(center - window_sec / 2, total_duration - window_sec))
         end_sec = min(total_duration, start_sec + window_sec)
-        self.plot_data(start_sec=start_sec, end_sec=end_sec, reset_x_range=False, reset_y_range=False)
+        self.plot_data(
+            start_sec=start_sec,
+            end_sec=end_sec,
+            reset_x_range=False,
+            reset_y_range=reset_y_range,
+            fit_x_range=fit_x_range,
+            show_loading=show_loading,
+        )
 
     def load_settings(self):
         """Load the saved settings ini file."""
@@ -222,6 +244,28 @@ class SignalApp(QWidget):
         if not analyses:
             analyses = (self.DEFAULT_ANALYSIS,)
         
+        # General slicing and display options
+        saved_max_slice_points = self.settings.value("max_slice_points", self.MAX_SLICE_POINTS)
+        try:
+            max_slice_points = int(saved_max_slice_points)
+            if max_slice_points <= 0:
+                max_slice_points = self.MAX_SLICE_POINTS
+        except (TypeError, ValueError):
+            max_slice_points = self.MAX_SLICE_POINTS
+        self.max_slice_points = max_slice_points
+
+        saved_remove_invisible = self.settings.value("remove_invisible_points", True)
+        if isinstance(saved_remove_invisible, bool):
+            self.remove_invisible_points = saved_remove_invisible
+        else:
+            self.remove_invisible_points = (
+                str(saved_remove_invisible).strip().lower() not in ("false", "0", "no")
+            )
+        self.parameters_dialog.set_general_options(
+            self.max_slice_points,
+            self.remove_invisible_points,
+        )
+
         # Populate the dialog
         self.parameters_dialog.set_selected_functions_and_parameters(analyses, parameters)
         self.active_analyses = analyses
@@ -244,15 +288,17 @@ class SignalApp(QWidget):
         self.settings.sync()
 
     def save_analysis_functions_and_parameters(self, evaluate: bool = True):
-        """Save selected analysis functions and parameters into an ini file.
+        """Save selected analysis functions, parameters, and general options into an ini file.
         If `evaluate` is true, the parameters are first evaluated and if there is an
         invalid value, the saving is aborted and a message box is shown.
         """
         if evaluate:
             try:
+                self.parameters_dialog.get_general_options()
                 self.parameters_dialog.get_selected_functions_and_parameters()
             except ValueError as exc:
                 QMessageBox.warning(self, "Invalid analysis parameter", str(exc))
+                return
         
         # Get the text values of the parameters for saving
         functions, parameters = self.parameters_dialog.get_selected_functions_and_parameter_texts()
@@ -262,6 +308,8 @@ class SignalApp(QWidget):
         }
         # Stored as JSON
         self.settings.setValue("analysis_functions", json.dumps(configuration))
+        self.settings.setValue("max_slice_points", self.max_slice_points)
+        self.settings.setValue("remove_invisible_points", self.remove_invisible_points)
         self.settings.sync()
 
     def on_channel_changed(self):
@@ -351,11 +399,11 @@ class SignalApp(QWidget):
 
     def _count_total_peaks(
         self, count_id, reader, start_from_sec, initial_count,
-        channel_choice, analyses, parameters, progress_callback=None,
+        channel_choice, analyses, parameters, max_slice_points, progress_callback=None,
     ):
         """Count total peaks across the entire file in bounded chunks."""
         total_duration = reader.total_samples / reader.sample_rate
-        chunk_sec = self.MAX_SLICE_POINTS / reader.sample_rate
+        chunk_sec = max_slice_points / reader.sample_rate
         channel_indices = self._channel_indices_for(channel_choice)
         total_peaks = initial_count
         t = start_from_sec
@@ -402,7 +450,7 @@ class SignalApp(QWidget):
 
     def _run_analysis(
         self, request_id, start_sec, end_sec, reset_x_range, reset_y_range,
-        channel_choice, parameters,
+        fit_x_range, channel_choice, parameters,
     ):
         """Run the selected signal analysis functions for a slice of the current `SignalReader`'s data."""
         # Background worker task: slices data and runs signal analysis
@@ -417,7 +465,7 @@ class SignalApp(QWidget):
                 result,
                 **analysis.parameters_for_call(parameters[analysis.key])
             )
-        return request_id, result, (start_sec, end_sec), reset_x_range, reset_y_range
+        return request_id, result, (start_sec, end_sec), reset_x_range, reset_y_range, fit_x_range
 
     def plot_data(
         self,
@@ -425,14 +473,16 @@ class SignalApp(QWidget):
         end_sec: float | None = None,
         reset_x_range: bool = True,
         reset_y_range: bool = True,
+        fit_x_range: bool = False,
+        show_loading: bool | None = None,
     ):
         """Run signal analysis and plotting in a background thread."""
         channel_choice = self.channel_combo.currentText()
         parameters = self.analysis_parameters
 
-        # Cap slice length to MAX_SLICE_POINTS raw samples for large files
+        # Cap slice length to max_slice_points raw samples for large files
         total_duration = self.reader.total_samples / self.reader.sample_rate
-        max_window_sec = min(total_duration, self.MAX_SLICE_POINTS / self.reader.sample_rate)
+        max_window_sec = min(total_duration, self.max_slice_points / self.reader.sample_rate)
         if start_sec is None or end_sec is None:
             start_sec = 0.0
             end_sec = max_window_sec
@@ -441,7 +491,9 @@ class SignalApp(QWidget):
         request_id = self._analysis_request_id
         self._analysis_running = True
 
-        if reset_x_range:
+        if show_loading is None:
+            show_loading = reset_x_range
+        if show_loading:
             self.btn.setEnabled(False)
             self.plot_widget.setTitle("Analyzing signal, please wait...")
 
@@ -449,7 +501,7 @@ class SignalApp(QWidget):
         worker = Worker(
             self._run_analysis,
             request_id, start_sec, end_sec, reset_x_range, reset_y_range,
-            channel_choice, parameters,
+            fit_x_range, channel_choice, parameters,
         )
         worker.signals.result.connect(self._on_analysis_finished)
         worker.signals.error.connect(self._on_analysis_error)
@@ -458,7 +510,7 @@ class SignalApp(QWidget):
 
     def _on_analysis_finished(self, payload):
         """Plot the signal and update the peak label and plot title."""
-        request_id, result, loaded_range, reset_x_range, reset_y_range = payload
+        request_id, result, loaded_range, reset_x_range, reset_y_range, fit_x_range = payload
         # Ignore results from outdated pan/analysis requests
         if request_id != self._analysis_request_id:
             return
@@ -469,7 +521,7 @@ class SignalApp(QWidget):
         slice_peak_count = sum(len(peak_set.x) for peak_set in result.peak_sets)
         total_duration = self.reader.total_samples / self.reader.sample_rate
 
-        if self.reader.total_samples <= self.MAX_SLICE_POINTS:
+        if self.reader.total_samples <= self.max_slice_points:
             self.total_peak_count = slice_peak_count
         else:
             # Show already-detected peaks immediately while background counting finishes
@@ -488,6 +540,7 @@ class SignalApp(QWidget):
                     self.channel_combo.currentText(),
                     self.active_analyses,
                     {k: dict(v) for k, v in self.analysis_parameters.items()},
+                    self.max_slice_points,
                 )
                 count_worker.signals.progress.connect(
                     lambda val, cid=count_id: self._on_total_peak_count_progress(cid, val)
@@ -504,8 +557,8 @@ class SignalApp(QWidget):
 
         x_limits = (0.0, total_duration) if total_duration > 0 else None
         # Keep half of the loaded slice off-screen as buffer on large files
-        if total_duration > 0 and self.reader.total_samples > self.MAX_SLICE_POINTS:
-            max_x_range = (self.MAX_SLICE_POINTS / self.reader.sample_rate) * 0.5
+        if total_duration > 0 and self.reader.total_samples > self.max_slice_points:
+            max_x_range = (self.max_slice_points / self.reader.sample_rate) * 0.5
         else:
             max_x_range = total_duration if total_duration > 0 else None
 
@@ -516,6 +569,8 @@ class SignalApp(QWidget):
             max_x_range=max_x_range,
             reset_x_range=reset_x_range,
             reset_y_range=reset_y_range,
+            remove_invisible_points=self.remove_invisible_points,
+            fit_x_range=fit_x_range,
         )
         self.btn.setEnabled(True)
 
@@ -530,24 +585,55 @@ class SignalApp(QWidget):
         QMessageBox.critical(self, "Error in signal analysis", f"{err[0].__name__}: {err[1]}")
         self.btn.setEnabled(True)
 
-    def update_analysis_functions(self, functions: tuple[AnalysisFunction, ...], parameters: dict[str, dict]):
-        """Update and saveselected analysis functions and their parameters,
+    def update_analysis_functions(
+        self,
+        functions: tuple[AnalysisFunction, ...],
+        parameters: dict[str, dict],
+        max_slice_points: int,
+        remove_invisible_points: bool,
+    ):
+        """Update and save selected analysis functions, parameters, and general options,
         then update the plot if data is available.
         """
-        self.active_analyses = functions
-        self.analysis_parameters = {
+        new_parameters = {
             analysis.key: dict(parameters.get(analysis.key, analysis.defaults))
-            for analysis in self.active_analyses
+            for analysis in functions
         }
-        # Save selected functions and parameters
+        analyses_changed = (
+            functions != self.active_analyses
+            or new_parameters != self.analysis_parameters
+        )
+        max_slice_changed = max_slice_points != self.max_slice_points
+
+        self.active_analyses = functions
+        self.analysis_parameters = new_parameters
+        self.max_slice_points = max_slice_points
+        self.remove_invisible_points = remove_invisible_points
+
+        # Save selected functions, parameters, and general options
         self.save_analysis_functions_and_parameters(evaluate=False)
-        # Plot if reader and data available
+
+        # Update plot if reader and data are available
         if hasattr(self, "reader") and self.reader is not None and self.reader.data is not None:
-            self._invalidate_total_peak_count()
-            if self.loaded_range is not None:
-                self.plot_data(*self.loaded_range, reset_x_range=False)
+            if analyses_changed or max_slice_changed:
+                self._invalidate_total_peak_count()
+                if max_slice_changed and self.loaded_range is not None:
+                    self._reload_visible_slice(
+                        force=True,
+                        reset_y_range=analyses_changed,
+                        fit_x_range=True,
+                        show_loading=True,
+                    )
+                elif self.loaded_range is not None:
+                    self.plot_data(
+                        *self.loaded_range,
+                        reset_x_range=False,
+                        show_loading=True,
+                    )
+                else:
+                    self.plot_data()
             else:
-                self.plot_data()
+                set_plot_downsampling(self.plot_widget, self.remove_invisible_points)
     
     
     # CSV to DAT conversion

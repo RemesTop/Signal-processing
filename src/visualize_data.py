@@ -35,6 +35,17 @@ def make_peak_tip(peak_set):
         return "\n".join(lines)
     return tip
 
+def set_plot_downsampling(plot_widget: pg.PlotWidget, enabled: bool):
+    """Enable or disable automatic peak downsampling on `plot_widget`."""
+    plot_item = plot_widget.getPlotItem()
+    if enabled:
+        plot_item.setDownsampling(auto=True, mode="peak")
+    else:
+        plot_item.setDownsampling(ds=False, auto=False)
+    plot_item.updateDownsampling()
+    plot_widget.update()
+
+
 def plot_signal(
     plot_widget: pg.PlotWidget,
     result: AnalysisResult,
@@ -42,26 +53,30 @@ def plot_signal(
     max_x_range: float | None = None,
     reset_x_range: bool = True,
     reset_y_range: bool = True,
+    remove_invisible_points: bool = True,
+    fit_x_range: bool = False,
 ):
     """Populate `plot_widget` with the lines and peak sets from `result`."""
     plot_widget.clear()
     plot_item = plot_widget.getPlotItem()
     view_box = plot_item.getViewBox()
+    prev_x_min, prev_x_max = view_box.viewRange()[0]
 
     # Update the zoom/pan limits (use full file bounds when loading in slices)
     time = result.slice.time
     if x_limits is not None:
         x_min, x_max = x_limits
         max_range = max_x_range if max_x_range is not None else (x_max - x_min)
-        view_box.setLimits(xMin=x_min, xMax=x_max, maxXRange=max_range, minXRange=2e-4)
+        min_range = min(2e-4, max_range) if max_range > 0 else 2e-4
+        view_box.setLimits(xMin=x_min, xMax=x_max, maxXRange=max_range, minXRange=min_range)
     elif time.size:
         view_box.setLimits(xMin=time.min(), xMax=time.max(), maxXRange=time.max() - time.min(), minXRange=2e-4)
     else:
         view_box.setLimits(xMin=None, xMax=None, maxXRange=None, minXRange=2e-4)
 
-    # Clip to visible view and auto-downsample to screen resolution for performance
+    # Clip to visible view and optionally auto-downsample to screen resolution for performance
     plot_item.setClipToView(True)
-    plot_item.setDownsampling(auto=True, mode="peak")
+    set_plot_downsampling(plot_widget, remove_invisible_points)
 
     if plot_item.legend is None:
         plot_item.addLegend()
@@ -106,6 +121,13 @@ def plot_signal(
             view_box.enableAutoRange(axis=pg.ViewBox.XAxis)
             view_box.updateAutoRange()
             view_box.disableAutoRange(axis=pg.ViewBox.XAxis)
+    elif x_limits is not None and max_x_range is not None and (
+        fit_x_range or (prev_x_max - prev_x_min) > max_x_range
+    ):
+        # Resize X range around the previous center when max_slice_points changed or max_x_range shrunk
+        center = (prev_x_min + prev_x_max) / 2
+        new_min = max(x_limits[0], min(center - max_x_range / 2, x_limits[1] - max_x_range))
+        view_box.setXRange(new_min, min(x_limits[1], new_min + max_x_range), padding=0)
     if reset_y_range:
         # Fit Y once and lock it so the Y axis does not rescale while panning
         view_box.enableAutoRange(axis=pg.ViewBox.YAxis)

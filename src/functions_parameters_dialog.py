@@ -4,8 +4,8 @@ from collections.abc import Mapping, Sequence
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-    QFrame, QMessageBox, QPushButton, QScrollArea, QToolButton, QVBoxLayout,
-    QWidget
+    QFrame, QMessageBox, QPushButton, QScrollArea, QSpinBox, QToolButton,
+    QVBoxLayout, QWidget
 )
 
 from peak_finder import AnalysisFunction
@@ -26,11 +26,33 @@ class _CheckboxLabel(QLabel):
         super().mouseReleaseEvent(event)
 
 
+class _PercentageSpinBox(QSpinBox):
+    """QSpinBox whose up/down arrow buttons increase or decrease the value by 10%."""
+
+    def __init__(self, step_percent: float = 0.1, parent=None):
+        super().__init__(parent)
+        self._step_percent = step_percent
+
+    def stepBy(self, steps: int):
+        if steps == 0:
+            return
+        current = self.value()
+        if steps > 0:
+            new_val = int(round(current * ((1.0 + self._step_percent) ** steps)))
+            if new_val <= current:
+                new_val = current + steps
+        else:
+            new_val = int(round(current * ((1.0 - self._step_percent) ** (-steps))))
+            if new_val >= current:
+                new_val = current + steps
+        self.setValue(max(self.minimum(), min(self.maximum(), new_val)))
+
+
 class FunctionsParametersDialog(QDialog):
     """Dialog for selecting signal analysis functions and editing their parameters.
     The changes made here are only saved once "Apply" is clicked.
     """
-    changes_applied = Signal(tuple, dict)
+    changes_applied = Signal(tuple, dict, int, bool)
     closed = Signal()
 
     FUNCS_AREA_WIDTH = 180
@@ -39,7 +61,9 @@ class FunctionsParametersDialog(QDialog):
     def __init__(self,
                  analyses: Sequence[AnalysisFunction],
                  selected_analyses: Sequence[AnalysisFunction],
-                 parent=None):
+                 parent=None,
+                 default_max_slice_points: int = 20_000_000,
+                 default_remove_invisible_points: bool = True):
         super().__init__(parent)
 
         self.analyses = tuple(analyses)
@@ -48,6 +72,7 @@ class FunctionsParametersDialog(QDialog):
         self.fields: dict[str, dict[str, QLineEdit]] = {}
         self.sections: dict[str, QGroupBox] = {}
         self.checkboxes: dict[str, QCheckBox] = {}
+        self.stored_parameters: Mapping[str, Mapping[str, object]] = {}
 
         self.setWindowTitle("Analysis functions and parameters")
         self.resize(self.FUNCS_AREA_WIDTH + self.PARAMS_AREA_WIDTH, 600)
@@ -121,6 +146,37 @@ class FunctionsParametersDialog(QDialog):
         params_layout = QVBoxLayout(params_content)
         params_layout.setContentsMargins(0, 0, 6, 0)
 
+        # General slicing and display options at the top of the parameters panel
+        general_section = QGroupBox("General graph options")
+        general_form = QFormLayout(general_section)
+
+        self.max_slice_points_spinbox = _PercentageSpinBox(step_percent=0.1)
+        self.max_slice_points_spinbox.setRange(1, 2_147_483_647)
+        self.max_slice_points_spinbox.setGroupSeparatorShown(True)
+        self.max_slice_points_spinbox.setValue(
+            max(1, min(2_147_483_647, int(default_max_slice_points)))
+        )
+        self.max_slice_points_spinbox.setToolTip(
+            "Maximum number of raw samples loaded and analyzed per slice on large files (arrows step by ±10%)"
+        )
+        general_form.addRow("Max points per slice", self.max_slice_points_spinbox)
+
+        remove_invisible_tooltip = (
+            "Auto-downsample plotted curves to screen resolution (peak mode) for better performance"
+        )
+        self.remove_invisible_points_checkbox = QCheckBox()
+        self.remove_invisible_points_checkbox.setChecked(default_remove_invisible_points)
+        self.remove_invisible_points_checkbox.setToolTip(remove_invisible_tooltip)
+        self.remove_invisible_points_checkbox.setAccessibleName("Remove invisible points")
+
+        remove_invisible_label = _CheckboxLabel("Remove invisible points")
+        remove_invisible_label.setBuddy(self.remove_invisible_points_checkbox)
+        remove_invisible_label.setToolTip(remove_invisible_tooltip)
+        remove_invisible_label.clicked.connect(self.remove_invisible_points_checkbox.click)
+        general_form.addRow(remove_invisible_label, self.remove_invisible_points_checkbox)
+
+        params_layout.addWidget(general_section)
+
         # Forms for editing the parameters
         for analysis in self.analyses:
             section = QGroupBox(analysis.title)
@@ -164,17 +220,30 @@ class FunctionsParametersDialog(QDialog):
         layout.addLayout(hbox_buttons)
 
     def apply_parameters(self):
-        """Evaluate the parameters for each selected function and
-        emit `changes_applied` with the selected functions and their parameters
-        if the parameters were all valid.
+        """Evaluate the general options and parameters for each selected function and
+        emit `changes_applied` if all values were valid.
         """
         try:
+            max_slice_points, remove_invisible_points = self.get_general_options()
             selected_analyses, parameters = self.get_selected_functions_and_parameters()
         except ValueError as exc:
             QMessageBox.warning(self, "Invalid analysis parameter", str(exc))
             return
 
-        self.changes_applied.emit(selected_analyses, parameters)
+        self.changes_applied.emit(
+            selected_analyses, parameters, max_slice_points, remove_invisible_points
+        )
+
+    def set_general_options(self, max_slice_points: int, remove_invisible_points: bool):
+        """Set the displayed general slicing and plot options."""
+        clamped = max(self.max_slice_points_spinbox.minimum(), min(self.max_slice_points_spinbox.maximum(), int(max_slice_points)))
+        self.max_slice_points_spinbox.setValue(clamped)
+        self.remove_invisible_points_checkbox.setChecked(bool(remove_invisible_points))
+
+    def get_general_options(self) -> tuple[int, bool]:
+        """Return evaluated `(max_slice_points, remove_invisible_points)`."""
+        self.max_slice_points_spinbox.interpretText()
+        return self.max_slice_points_spinbox.value(), self.remove_invisible_points_checkbox.isChecked()
 
     def set_selected_functions_and_parameters(self,
                                               functions: Sequence[AnalysisFunction],
