@@ -356,7 +356,7 @@ class TestGetSliceRaw:
         s = reader.get_slice(1, 2)
         assert len(s.time) == len(s.data) == 10
         assert s.time[0] == pytest.approx(1.0)
-        assert s.time[-1] == pytest.approx(2.0)
+        assert s.time[-1] == pytest.approx(1.9)
 
     def test_whole_signal(self, reader):
         s = reader.get_slice(0, 10)
@@ -433,7 +433,8 @@ class TestGetSliceDownsampled:
         s = reader.get_slice(0, 10, downsample_factor=10, downsample="mean")
         assert len(s.time) == len(s.data) == 10
         assert s.time[0] == pytest.approx(0.0)
-        assert s.time[-1] == pytest.approx(10.0)
+        assert s.time[-1] == pytest.approx(9.0)
+        assert s.sample_rate == pytest.approx(reader.sample_rate / 10)
 
     def test_downsampling_applies_when_total_just_exceeds_factor(self, reader, fake_downsample):
         # 10 samples with factor 9 -> total > factor, so downsampling happens
@@ -455,24 +456,10 @@ class TestGetSliceDownsampled:
 # ---------------------------------------------------------------- known issues in time axis
 
 class TestTimeAxisKnownIssues:
-    """These document behavior that looks wrong; strict xfail flips to a failure once fixed."""
-
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason="Time axis is built with np.linspace(start, end, n) (endpoint included), so "
-        "spacing is (end-start)/(n-1) instead of 1/sample_rate.",
-    )
     def test_slice_sample_rate_matches_reader_sample_rate(self, reader):
         s = reader.get_slice(1, 2)
         assert s.sample_rate == pytest.approx(reader.sample_rate)
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason="Data is clamped to the file's range but the time axis still uses the "
-        "unclamped start/end, so timestamps no longer line up with the samples.",
-    )
     def test_time_axis_stays_within_signal_when_range_is_clamped(self, reader):
         s = reader.get_slice(-5, 1)
         assert s.time[0] >= 0.0
