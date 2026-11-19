@@ -24,6 +24,10 @@ class SignalApp(QWidget):
     
     # Analysis function selected by default if there are no saved selections
     DEFAULT_ANALYSIS = ANALYSIS_FUNCTIONS["Raw signal with peaks"]
+    # Maximum raw samples loaded and analyzed per slice on large files
+    MAX_SLICE_POINTS = 20_000_000
+    # Start prefetching next slice when visible edge is within 20% of the loaded slice boundary
+    PREFETCH_MARGIN_RATIO = 0.2
     
     def __init__(self):
         super().__init__()
@@ -90,10 +94,21 @@ class SignalApp(QWidget):
         self.plot_widget.setLabel("left", "Reading")
         self.plot_widget.setTitle(" ")
         view_box: pg.ViewBox = self.plot_widget.getViewBox()
-        # Auto fit y-axis
+        # State for slice-based loading and whole-file peak counting on large files
+        self.loaded_range: tuple[float, float] | None = None
+        self._analysis_request_id = 0
+        self._analysis_running = False
+        self.total_peak_count: int | None = None
+        self._peak_count_request_id = 1
+        self._peak_count_started_id = 0
+        self.pan_timer = QTimer(self)
+        self.pan_timer.setSingleShot(True)
+        self.pan_timer.setInterval(50)
+        self.pan_timer.timeout.connect(self._reload_visible_slice)
+
+        # Keep y-axis fixed while panning x; prefetch slices on large files
         view_box.setMouseEnabled(x=True, y=False)
-        view_box.setAutoVisible(y=True)
-        view_box.sigXRangeChanged.connect(self._fit_plot_y)
+        view_box.sigXRangeChanged.connect(self._on_x_range_changed)
         self.factor_input.setPrefix("Factor: ")
 
         # Layout
@@ -113,9 +128,46 @@ class SignalApp(QWidget):
         # Restore saved settings on startup
         self.load_settings()
 
-    def _fit_plot_y(self, view_box: pg.ViewBox, _):
-        """Refresh the auto-ranging of the pyqtgraph ViewBox."""
-        QTimer.singleShot(0, view_box.updateAutoRange)
+    def _on_x_range_changed(self, _view_box: pg.ViewBox, x_range):
+        """Schedule a slice prefetch before the user reaches the edge of the loaded range."""
+        if (
+            not hasattr(self, "reader")
+            or self.reader is None
+            or self.reader.data is None
+            or self.loaded_range is None
+            or self.reader.total_samples <= self.MAX_SLICE_POINTS
+        ):
+            return
+
+        total_duration = self.reader.total_samples / self.reader.sample_rate
+        window_sec = min(total_duration, self.MAX_SLICE_POINTS / self.reader.sample_rate)
+        margin = window_sec * self.PREFETCH_MARGIN_RATIO
+        view_min = max(0.0, x_range[0])
+        view_max = min(total_duration, x_range[1])
+        loaded_start, loaded_end = self.loaded_range
+
+        # Prefetch early while buffered data is still ahead so the graph stays connected
+        need_left = loaded_start > 1e-3 and view_min < loaded_start + margin
+        need_right = loaded_end < total_duration - 1e-3 and view_max > loaded_end - margin
+        if (need_left or need_right) and not self.pan_timer.isActive():
+            self.pan_timer.start()
+
+    def _reload_visible_slice(self):
+        """Load a new slice centered on the current X view range."""
+        if (
+            self._analysis_running
+            or not hasattr(self, "reader")
+            or self.reader is None
+            or self.reader.data is None
+        ):
+            return
+        total_duration = self.reader.total_samples / self.reader.sample_rate
+        window_sec = min(total_duration, self.MAX_SLICE_POINTS / self.reader.sample_rate)
+        x_min, x_max = self.plot_widget.getViewBox().viewRange()[0]
+        center = (x_min + x_max) / 2
+        start_sec = max(0.0, min(center - window_sec / 2, total_duration - window_sec))
+        end_sec = min(total_duration, start_sec + window_sec)
+        self.plot_data(start_sec=start_sec, end_sec=end_sec, reset_x_range=False, reset_y_range=False)
 
     def load_settings(self):
         """Load the saved settings ini file."""
@@ -222,7 +274,11 @@ class SignalApp(QWidget):
     def on_channel_changed(self):
         """When selecting displayed channel(s), plot the data if it has been read before."""
         if hasattr(self, "reader") and self.reader is not None and self.reader.data is not None:
-            self.plot_data()
+            self._invalidate_total_peak_count()
+            if self.loaded_range is not None:
+                self.plot_data(*self.loaded_range, reset_x_range=False)
+            else:
+                self.plot_data()
 
     def closeEvent(self, event):
         """Save settings on closing the application."""
@@ -247,6 +303,9 @@ class SignalApp(QWidget):
         if not file_path:
             return
 
+        self.pan_timer.stop()
+        self.loaded_range = None
+        self._invalidate_total_peak_count()
         self.btn.setEnabled(False)
         self.reader = SignalReader(file_path, multithreading=True)
 
@@ -263,20 +322,81 @@ class SignalApp(QWidget):
         """Update csv conversion progress label."""
         self.plot_widget.setTitle(f"Converting csv to binary, please wait {percent:.0f}%")
 
-    def _run_analysis(self, method, factor, channel_choice, parameters):
-        """Run the selected signal analysis functions for the current `SignalReader`'s data."""
-        # Background worker task: slices data and runs signal analysis
-        total_duration = self.reader.total_samples / self.reader.sample_rate
-        signal_slice = self.reader.get_slice(0, total_duration, downsample_factor=factor, downsample=method)
-
-        # Restrict processing to the chosen channel (or both) to optimize performance
+    def _channel_indices_for(self, channel_choice: str) -> tuple[int, ...]:
+        """Map the channel dropdown selection to channel index tuple."""
         if channel_choice == "Channel 1":
-            channel_indices = (0,)
-        elif channel_choice == "Channel 2":
-            channel_indices = (1,)
-        else:
-            channel_indices = (0, 1)
+            return (0,)
+        if channel_choice == "Channel 2":
+            return (1,)
+        return (0, 1)
 
+    def _format_duration(self, seconds: float) -> str:
+        """Format duration in seconds as m:ss (or h:mm:ss)."""
+        total_secs = int(round(seconds))
+        hours, rem = divmod(total_secs, 3600)
+        minutes, secs = divmod(rem, 60)
+        return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+
+    def _update_plot_title(self):
+        """Update the plot title with total file duration, total peaks, and active functions."""
+        total_duration = self.reader.total_samples / self.reader.sample_rate
+        duration_str = self._format_duration(total_duration)
+        peaks_str = str(self.total_peak_count) if self.total_peak_count is not None else "counting..."
+        analysis_names = ", ".join(analysis.title for analysis in self.active_analyses)
+        self.plot_widget.setTitle(
+            f"File duration: {duration_str}, Peaks: {peaks_str}, Functions: {analysis_names}"
+        )
+
+    def _invalidate_total_peak_count(self):
+        """Reset cached whole-file peak count and cancel any in-flight counting worker."""
+        self.total_peak_count = None
+        self._peak_count_request_id += 1
+
+    def _count_total_peaks(
+        self, count_id, reader, start_from_sec, initial_count,
+        method, factor, channel_choice, analyses, parameters,
+    ):
+        """Count total peaks across the entire file in bounded chunks."""
+        total_duration = reader.total_samples / reader.sample_rate
+        chunk_sec = self.MAX_SLICE_POINTS / reader.sample_rate
+        channel_indices = self._channel_indices_for(channel_choice)
+        total_peaks = initial_count
+        t = start_from_sec
+
+        while t < total_duration - 1e-9:
+            if count_id != self._peak_count_request_id:
+                return count_id, None
+            end = min(total_duration, t + chunk_sec)
+            signal_slice = reader.get_slice(t, end, downsample_factor=factor, downsample=method)
+            signal_slice = Slice(signal_slice.time, signal_slice.data, channel_indices=channel_indices)
+            result = AnalysisResult(signal_slice)
+            for analysis in analyses:
+                analysis.function(
+                    signal_slice,
+                    result,
+                    **analysis.parameters_for_call(parameters[analysis.key])
+                )
+            total_peaks += sum(len(peak_set.x) for peak_set in result.peak_sets)
+            t = end
+
+        return count_id, total_peaks
+
+    def _on_total_peak_count_finished(self, payload):
+        """Update the title once whole-file peak counting completes."""
+        count_id, total_peaks = payload
+        if count_id != self._peak_count_request_id or total_peaks is None:
+            return
+        self.total_peak_count = total_peaks
+        self._update_plot_title()
+
+    def _run_analysis(
+        self, request_id, start_sec, end_sec, reset_x_range, reset_y_range,
+        method, factor, channel_choice, parameters,
+    ):
+        """Run the selected signal analysis functions for a slice of the current `SignalReader`'s data."""
+        # Background worker task: slices data and runs signal analysis
+        signal_slice = self.reader.get_slice(start_sec, end_sec, downsample_factor=factor, downsample=method)
+        channel_indices = self._channel_indices_for(channel_choice)
         signal_slice = Slice(signal_slice.time, signal_slice.data, channel_indices=channel_indices)
 
         result = AnalysisResult(signal_slice)
@@ -286,44 +406,109 @@ class SignalApp(QWidget):
                 result,
                 **analysis.parameters_for_call(parameters[analysis.key])
             )
-        return result
+        return request_id, result, (start_sec, end_sec), reset_x_range, reset_y_range
 
-    def plot_data(self):
+    def plot_data(
+        self,
+        start_sec: float | None = None,
+        end_sec: float | None = None,
+        reset_x_range: bool = True,
+        reset_y_range: bool = True,
+    ):
         """Run signal analysis and plotting in a background thread."""
         method = self.combo.currentText()
         factor = self.factor_input.value()
         channel_choice = self.channel_combo.currentText()
         parameters = self.analysis_parameters
 
-        self.btn.setEnabled(False)
-        self.plot_widget.setTitle("Analyzing signal, please wait...")
+        # Cap slice length to MAX_SLICE_POINTS raw samples for large files
+        total_duration = self.reader.total_samples / self.reader.sample_rate
+        max_window_sec = min(total_duration, self.MAX_SLICE_POINTS / self.reader.sample_rate)
+        if start_sec is None or end_sec is None:
+            start_sec = 0.0
+            end_sec = max_window_sec
+
+        self._analysis_request_id += 1
+        request_id = self._analysis_request_id
+        self._analysis_running = True
+
+        if reset_x_range:
+            self.btn.setEnabled(False)
+            self.plot_widget.setTitle("Analyzing signal, please wait...")
 
         # Run the peak analysis in a background worker thread to keep GUI responsive
-        worker = Worker(self._run_analysis, method, factor, channel_choice, parameters)
+        worker = Worker(
+            self._run_analysis,
+            request_id, start_sec, end_sec, reset_x_range, reset_y_range,
+            method, factor, channel_choice, parameters,
+        )
         worker.signals.result.connect(self._on_analysis_finished)
         worker.signals.error.connect(self._on_analysis_error)
         QThreadPool.globalInstance().start(worker)
 
-    def _on_analysis_finished(self, result):
+    def _on_analysis_finished(self, payload):
         """Plot the signal and update the peak label and plot title."""
-        # Displays the number of detected peaks in the label
+        request_id, result, loaded_range, reset_x_range, reset_y_range = payload
+        # Ignore results from outdated pan/analysis requests
+        if request_id != self._analysis_request_id:
+            return
+        self._analysis_running = False
+        self.loaded_range = loaded_range
 
-        peak_count = sum(len(peak_set.x) for peak_set in result.peak_sets)
+        slice_peak_count = sum(len(peak_set.x) for peak_set in result.peak_sets)
+        total_duration = self.reader.total_samples / self.reader.sample_rate
 
-        # This displaying of names can maybe be replaced with just labels in the graph or multiple graphs
-        analysis_names = ", ".join(analysis.title for analysis in self.active_analyses)
-        points_count = len(result.lines[0].x) if result.lines else 0
-        self.plot_widget.setTitle(
-            f"Points: {points_count}, Peaks: {peak_count}, Functions: {analysis_names}"
+        if self.reader.total_samples <= self.MAX_SLICE_POINTS:
+            self.total_peak_count = slice_peak_count
+        elif self.total_peak_count is None and self._peak_count_started_id != self._peak_count_request_id:
+            # Count remaining chunks in the background for the total whole-file peak count
+            self._peak_count_started_id = self._peak_count_request_id
+            start_from = loaded_range[1] if loaded_range[0] <= 1e-9 else 0.0
+            initial_count = slice_peak_count if loaded_range[0] <= 1e-9 else 0
+            count_worker = Worker(
+                self._count_total_peaks,
+                self._peak_count_request_id,
+                self.reader,
+                start_from,
+                initial_count,
+                self.combo.currentText(),
+                self.factor_input.value(),
+                self.channel_combo.currentText(),
+                self.active_analyses,
+                {k: dict(v) for k, v in self.analysis_parameters.items()},
+            )
+            count_worker.signals.result.connect(self._on_total_peak_count_finished)
+            QThreadPool.globalInstance().start(count_worker)
+
+        self._update_plot_title()
+        # Show the parameter editing dialog on initial load
+        if reset_x_range:
+            self.action_param_window.setChecked(True)
+
+        x_limits = (0.0, total_duration) if total_duration > 0 else None
+        # Keep half of the loaded slice off-screen as buffer on large files
+        if total_duration > 0 and self.reader.total_samples > self.MAX_SLICE_POINTS:
+            max_x_range = (self.MAX_SLICE_POINTS / self.reader.sample_rate) * 0.5
+        else:
+            max_x_range = total_duration if total_duration > 0 else None
+
+        plot_signal(
+            self.plot_widget,
+            result,
+            x_limits=x_limits,
+            max_x_range=max_x_range,
+            reset_x_range=reset_x_range,
+            reset_y_range=reset_y_range,
         )
-        # Show the parameter editing dialog
-        self.action_param_window.setChecked(True)
-
-        plot_signal(self.plot_widget, result)
         self.btn.setEnabled(True)
+
+        # Re-check in case the user panned further while the worker was running
+        view_box = self.plot_widget.getViewBox()
+        self._on_x_range_changed(view_box, view_box.viewRange()[0])
 
     def _on_analysis_error(self, err):
         """Show an error message for an error in signal analysis."""
+        self._analysis_running = False
         self.plot_widget.setTitle("Peaks: unavailable.")
         QMessageBox.critical(self, "Error in signal analysis", f"{err[0].__name__}: {err[1]}")
         self.btn.setEnabled(True)
@@ -341,7 +526,11 @@ class SignalApp(QWidget):
         self.save_analysis_functions_and_parameters(evaluate=False)
         # Plot if reader and data available
         if hasattr(self, "reader") and self.reader is not None and self.reader.data is not None:
-            self.plot_data()
+            self._invalidate_total_peak_count()
+            if self.loaded_range is not None:
+                self.plot_data(*self.loaded_range, reset_x_range=False)
+            else:
+                self.plot_data()
     
     
     # CSV to DAT conversion

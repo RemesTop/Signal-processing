@@ -35,15 +35,26 @@ def make_peak_tip(peak_set):
         return "\n".join(lines)
     return tip
 
-def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
+def plot_signal(
+    plot_widget: pg.PlotWidget,
+    result: AnalysisResult,
+    x_limits: tuple[float, float] | None = None,
+    max_x_range: float | None = None,
+    reset_x_range: bool = True,
+    reset_y_range: bool = True,
+):
     """Populate `plot_widget` with the lines and peak sets from `result`."""
     plot_widget.clear()
     plot_item = plot_widget.getPlotItem()
     view_box = plot_item.getViewBox()
 
-    # Update the zoom limits of the plot widget
+    # Update the zoom/pan limits (use full file bounds when loading in slices)
     time = result.slice.time
-    if time.size:
+    if x_limits is not None:
+        x_min, x_max = x_limits
+        max_range = max_x_range if max_x_range is not None else (x_max - x_min)
+        view_box.setLimits(xMin=x_min, xMax=x_max, maxXRange=max_range, minXRange=2e-4)
+    elif time.size:
         view_box.setLimits(xMin=time.min(), xMax=time.max(), maxXRange=time.max() - time.min(), minXRange=2e-4)
     else:
         view_box.setLimits(xMin=None, xMax=None, maxXRange=None, minXRange=2e-4)
@@ -87,9 +98,19 @@ def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
         item.scatter.opts["hoverSize"] = 13
         item.scatter.opts["tip"] = make_peak_tip(peak_set)
 
-    # Center and fit the graph view to the currently plotted channel(s)
-    plot_widget.autoRange()
-    view_box.enableAutoRange(axis=pg.ViewBox.YAxis)
+    if reset_x_range:
+        # Fit initial X range (showing up to max_x_range so extra slice data is buffered off-screen)
+        if x_limits is not None and max_x_range is not None:
+            view_box.setXRange(x_limits[0], min(x_limits[1], x_limits[0] + max_x_range), padding=0)
+        else:
+            view_box.enableAutoRange(axis=pg.ViewBox.XAxis)
+            view_box.updateAutoRange()
+            view_box.disableAutoRange(axis=pg.ViewBox.XAxis)
+    if reset_y_range:
+        # Fit Y once and lock it so the Y axis does not rescale while panning
+        view_box.enableAutoRange(axis=pg.ViewBox.YAxis)
+        view_box.updateAutoRange()
+        view_box.disableAutoRange(axis=pg.ViewBox.YAxis)
 
 
 # Main method for testing the visualizer only
