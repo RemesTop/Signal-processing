@@ -68,7 +68,7 @@ def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
                                 pen=None,
                                 symbol=DEFAULT_PEAKSET_SYMBOLS[index % len(DEFAULT_PEAKSET_SYMBOLS)],
                                 symbolBrush=pg.mkBrush(None),
-                                symbolPen=pg.mkPen(DEFAULT_PEAKSET_COLORS[index % len(DEFAULT_PEAKSET_COLORS)], width=1.5),
+                                symbolPen=pg.mkPen(DEFAULT_PEAKSET_COLORS[index % len(DEFAULT_PEAKSET_COLORS)], width=2),
                                 symbolSize=9,
                                 name=f"Peaks: {peak_set.label} ch.{peak_set.channel+1} ({len(peak_set.x)})")
         item.scatter.opts["hoverable"] = True
