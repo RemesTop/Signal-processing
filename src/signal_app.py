@@ -9,11 +9,12 @@ from PySide6.QtWidgets import (
     QPushButton, QFileDialog, QMenuBar, QMessageBox
 )
 from PySide6.QtCore import QSettings, QThreadPool, QTimer
+import numpy as np
 import pyqtgraph as pg
 from signal_reader import SignalReader, convert_csv_files
 from worker import Worker
 from visualize_data import TimeAxisItem, plot_signal, set_plot_downsampling
-from signal_classes import AnalysisResult, Slice
+from signal_classes import AnalysisResult, Line, PeakSet, Slice
 from functions_parameters_dialog import FunctionsParametersDialog
 from peak_finder import ANALYSIS_FUNCTIONS, AnalysisFunction
 
@@ -28,6 +29,8 @@ class SignalApp(QWidget):
     MAX_SLICE_POINTS = 20_000_000
     # Start prefetching next slice when visible edge is within 20% of the loaded slice boundary
     PREFETCH_MARGIN_RATIO = 0.2
+    # Extend each analyzed slice on both sides to avoid boundary artifacts, then trim back
+    SLICE_OVERLAP_SECONDS = 1.0
     
     def __init__(self):
         super().__init__()
@@ -386,6 +389,51 @@ class SignalApp(QWidget):
         self.counted_peaks_so_far = 0
         self._peak_count_request_id += 1
 
+    def _analyze_slice(
+        self, reader, start_sec, end_sec, channel_indices, analyses, parameters,
+    ) -> AnalysisResult:
+        """Analyze `[start_sec, end_sec]` using 1 s overlap on both sides, then trim results back."""
+        total_duration = reader.total_samples / reader.sample_rate
+        padded_start = max(0.0, start_sec - self.SLICE_OVERLAP_SECONDS)
+        padded_end = min(total_duration, end_sec + self.SLICE_OVERLAP_SECONDS)
+
+        raw_slice = reader.get_slice(padded_start, padded_end)
+        padded_slice = Slice(raw_slice.time, raw_slice.data, channel_indices=channel_indices)
+        result = AnalysisResult(padded_slice)
+        for analysis in analyses:
+            analysis.function(
+                padded_slice,
+                result,
+                **analysis.parameters_for_call(parameters[analysis.key])
+            )
+
+        if padded_start == start_sec and padded_end == end_sec:
+            return result
+
+        # Trim slice, lines, and peaks back to [start_sec, end_sec) (closed on the final chunk)
+        is_last = end_sec >= total_duration - 1e-9
+        slice_mask = (padded_slice.time >= start_sec) & (padded_slice.time <= end_sec)
+        trimmed_slice = Slice(
+            padded_slice.time[slice_mask],
+            padded_slice.data[slice_mask],
+            channel_indices=channel_indices,
+        )
+        trimmed_lines = []
+        for line in result.lines:
+            mask = (line.x >= start_sec) & (line.x <= end_sec)
+            trimmed_lines.append(Line(line.x[mask], line.y[mask], line.channel, line.label))
+
+        trimmed_peaks = []
+        for peak_set in result.peak_sets:
+            upper_mask = (peak_set.x <= end_sec) if is_last else (peak_set.x < end_sec)
+            mask = (peak_set.x >= start_sec) & upper_mask
+            trimmed_props = {k: np.asarray(v)[mask] for k, v in peak_set.properties.items()}
+            trimmed_peaks.append(
+                PeakSet(peak_set.x[mask], peak_set.y[mask], peak_set.channel, peak_set.label, trimmed_props)
+            )
+
+        return AnalysisResult(trimmed_slice, lines=trimmed_lines, peak_sets=trimmed_peaks)
+
     def _count_total_peaks(
         self, count_id, reader, start_from_sec, initial_count,
         channel_choice, analyses, parameters, max_slice_points, progress_callback=None,
@@ -401,15 +449,7 @@ class SignalApp(QWidget):
             if count_id != self._peak_count_request_id:
                 return count_id, None
             end = min(total_duration, t + chunk_sec)
-            signal_slice = reader.get_slice(t, end)
-            signal_slice = Slice(signal_slice.time, signal_slice.data, channel_indices=channel_indices)
-            result = AnalysisResult(signal_slice)
-            for analysis in analyses:
-                analysis.function(
-                    signal_slice,
-                    result,
-                    **analysis.parameters_for_call(parameters[analysis.key])
-                )
+            result = self._analyze_slice(reader, t, end, channel_indices, analyses, parameters)
             total_peaks += sum(len(peak_set.x) for peak_set in result.peak_sets)
             if progress_callback:
                 progress_callback.emit(float(total_peaks))
@@ -442,18 +482,11 @@ class SignalApp(QWidget):
         fit_x_range, channel_choice, parameters,
     ):
         """Run the selected signal analysis functions for a slice of the current `SignalReader`'s data."""
-        # Background worker task: slices data and runs signal analysis
-        signal_slice = self.reader.get_slice(start_sec, end_sec)
+        # Background worker task: slices data (with boundary overlap) and runs signal analysis
         channel_indices = self._channel_indices_for(channel_choice)
-        signal_slice = Slice(signal_slice.time, signal_slice.data, channel_indices=channel_indices)
-
-        result = AnalysisResult(signal_slice)
-        for analysis in self.active_analyses:
-            analysis.function(
-                signal_slice,
-                result,
-                **analysis.parameters_for_call(parameters[analysis.key])
-            )
+        result = self._analyze_slice(
+            self.reader, start_sec, end_sec, channel_indices, self.active_analyses, parameters
+        )
         return request_id, result, (start_sec, end_sec), reset_x_range, reset_y_range, fit_x_range
 
     def plot_data(
