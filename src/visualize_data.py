@@ -13,7 +13,10 @@ DEFAULT_LINE_COLORS = (
     "#bc56ec", "#abd47b", "#2743e0", "#8c564b"
 )
 DEFAULT_PEAKSET_COLORS = ("#bb0000",)
-DEFAULT_PEAKSET_SYMBOLS = ("o", "t1", "s", "d")
+DEFAULT_PEAKSET_SYMBOLS = {
+    "brush": (False, False, True, False),
+    "symbol": ("o", "s", "x", "d")
+}
 
 
 def make_peak_tip(peak_set):
@@ -64,11 +67,20 @@ def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
                          name=f"{line.label} ch.{line.channel+1}")
      # Plot all peaks as points, with a hover tooltip
     for index, peak_set in enumerate(result.peak_sets):
+        symbol_idx = index % len(DEFAULT_PEAKSET_SYMBOLS["symbol"])
         item = plot_widget.plot(peak_set.x, peak_set.y,
                                 pen=None,
-                                symbol=DEFAULT_PEAKSET_SYMBOLS[index % len(DEFAULT_PEAKSET_SYMBOLS)],
-                                symbolBrush=pg.mkBrush(None),
-                                symbolPen=pg.mkPen(DEFAULT_PEAKSET_COLORS[index % len(DEFAULT_PEAKSET_COLORS)], width=2),
+                                symbol=DEFAULT_PEAKSET_SYMBOLS["symbol"][symbol_idx],
+                                symbolBrush=(
+                                    pg.mkBrush(DEFAULT_PEAKSET_COLORS[index % len(DEFAULT_PEAKSET_COLORS)])
+                                    if DEFAULT_PEAKSET_SYMBOLS["brush"][symbol_idx]
+                                    else pg.mkBrush(None)
+                                ),
+                                symbolPen=(
+                                    pg.mkPen(DEFAULT_PEAKSET_COLORS[index % len(DEFAULT_PEAKSET_COLORS)], width=2)
+                                    if not DEFAULT_PEAKSET_SYMBOLS["brush"][symbol_idx]
+                                    else pg.mkPen(None)
+                                ),
                                 symbolSize=9,
                                 name=f"Peaks: {peak_set.label} ch.{peak_set.channel+1} ({len(peak_set.x)})")
         item.scatter.opts["hoverable"] = True
