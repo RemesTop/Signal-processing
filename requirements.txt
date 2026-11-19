@@ -4,3 +4,4 @@ PySide6
 pyqtgraph
 scipy
 pybaselines
+pytest

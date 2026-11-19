@@ -104,19 +104,19 @@ class SignalReader(QObject):
             return Slice(np.array([]), np.empty((0, 2), dtype=np.int16))
 
         start_idx = max(0, int(start_sec * self.sample_rate))
-        end_idx = min(self.total_samples, int(end_sec * self.sample_rate))
+        end_idx = min(self.total_samples, max(0, int(end_sec * self.sample_rate)))
 
         raw_slice = self.data[start_idx:end_idx]
         total = len(raw_slice)
 
         # If no downsampling requested or factor <= 1, return raw data
         if downsample in (None, "none") or downsample_factor <= 1 or total <= downsample_factor:
-            time_axis = np.linspace(start_sec, end_sec, total)
+            time_axis = (start_idx + np.arange(total)) / self.sample_rate
             return Slice(time_axis, raw_slice)
 
         downsampled = self._downsample(raw_slice, downsample_factor, downsample)
 
-        # Create time axis based on start/end and amount of points
+        # Create time axis based on start index and amount of points
         # Can be used for reading samples or working with matplotlib
-        time_axis = np.linspace(start_sec, end_sec, len(downsampled))
+        time_axis = (start_idx + np.arange(len(downsampled)) * downsample_factor) / self.sample_rate
         return Slice(time_axis, downsampled)
