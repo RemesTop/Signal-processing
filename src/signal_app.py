@@ -25,8 +25,8 @@ class SignalApp(QWidget):
     
     # Analysis function selected by default if there are no saved selections
     DEFAULT_ANALYSIS = ANALYSIS_FUNCTIONS["Raw signal with peaks"]
-    # Maximum raw samples loaded and analyzed per slice on large files
-    MAX_SLICE_POINTS = 20_000_000
+    # Default length of the visible slice in seconds (loaded slice is 2x for off-screen buffering)
+    DEFAULT_VISIBLE_SLICE_SECONDS = 240
     # Start prefetching next slice when visible edge is within 20% of the loaded slice boundary
     PREFETCH_MARGIN_RATIO = 0.2
     # Extend each analyzed slice on both sides to avoid boundary artifacts, then trim back
@@ -46,14 +46,14 @@ class SignalApp(QWidget):
         # Editable parameters for each analysis function
         self.analysis_parameters = {analysis.key: analysis.defaults for analysis in self.active_analyses}
         # General slicing and display options
-        self.max_slice_points = self.MAX_SLICE_POINTS
+        self.visible_slice_seconds = self.DEFAULT_VISIBLE_SLICE_SECONDS
         self.remove_invisible_points = True
         # Dialog for editing the parameters
         self.parameters_dialog = FunctionsParametersDialog(
             tuple(ANALYSIS_FUNCTIONS.values()),
             self.active_analyses,
             self,
-            default_max_slice_points=self.max_slice_points,
+            default_visible_slice_seconds=self.visible_slice_seconds,
             default_remove_invisible_points=self.remove_invisible_points,
         )
         self.parameters_dialog.changes_applied.connect(self.update_analysis_functions)
@@ -138,12 +138,15 @@ class SignalApp(QWidget):
             or self.reader is None
             or self.reader.data is None
             or self.loaded_range is None
-            or self.reader.total_samples <= self.max_slice_points
         ):
             return
 
         total_duration = self.reader.total_samples / self.reader.sample_rate
-        window_sec = min(total_duration, self.max_slice_points / self.reader.sample_rate)
+        loaded_window_sec = self.visible_slice_seconds * 2.0
+        if total_duration <= loaded_window_sec + 1e-9:
+            return
+
+        window_sec = min(total_duration, loaded_window_sec)
         margin = window_sec * self.PREFETCH_MARGIN_RATIO
         view_min = max(0.0, x_range[0])
         view_max = min(total_duration, x_range[1])
@@ -171,7 +174,7 @@ class SignalApp(QWidget):
         ):
             return
         total_duration = self.reader.total_samples / self.reader.sample_rate
-        window_sec = min(total_duration, self.max_slice_points / self.reader.sample_rate)
+        window_sec = min(total_duration, self.visible_slice_seconds * 2.0)
         x_min, x_max = self.plot_widget.getViewBox().viewRange()[0]
         center = (x_min + x_max) / 2
         start_sec = max(0.0, min(center - window_sec / 2, total_duration - window_sec))
@@ -237,14 +240,16 @@ class SignalApp(QWidget):
             analyses = (self.DEFAULT_ANALYSIS,)
         
         # General slicing and display options
-        saved_max_slice_points = self.settings.value("max_slice_points", self.MAX_SLICE_POINTS)
+        saved_visible_seconds = self.settings.value(
+            "visible_slice_seconds", self.DEFAULT_VISIBLE_SLICE_SECONDS
+        )
         try:
-            max_slice_points = int(saved_max_slice_points)
-            if max_slice_points <= 0:
-                max_slice_points = self.MAX_SLICE_POINTS
+            visible_slice_seconds = int(saved_visible_seconds)
+            if visible_slice_seconds <= 0:
+                visible_slice_seconds = self.DEFAULT_VISIBLE_SLICE_SECONDS
         except (TypeError, ValueError):
-            max_slice_points = self.MAX_SLICE_POINTS
-        self.max_slice_points = max_slice_points
+            visible_slice_seconds = self.DEFAULT_VISIBLE_SLICE_SECONDS
+        self.visible_slice_seconds = visible_slice_seconds
 
         saved_remove_invisible = self.settings.value("remove_invisible_points", True)
         if isinstance(saved_remove_invisible, bool):
@@ -254,7 +259,7 @@ class SignalApp(QWidget):
                 str(saved_remove_invisible).strip().lower() not in ("false", "0", "no")
             )
         self.parameters_dialog.set_general_options(
-            self.max_slice_points,
+            self.visible_slice_seconds,
             self.remove_invisible_points,
         )
 
@@ -300,7 +305,7 @@ class SignalApp(QWidget):
         }
         # Stored as JSON
         self.settings.setValue("analysis_functions", json.dumps(configuration))
-        self.settings.setValue("max_slice_points", self.max_slice_points)
+        self.settings.setValue("visible_slice_seconds", self.visible_slice_seconds)
         self.settings.setValue("remove_invisible_points", self.remove_invisible_points)
         self.settings.sync()
 
@@ -436,11 +441,10 @@ class SignalApp(QWidget):
 
     def _count_total_peaks(
         self, count_id, reader, start_from_sec, initial_count,
-        channel_choice, analyses, parameters, max_slice_points, progress_callback=None,
+        channel_choice, analyses, parameters, chunk_sec, progress_callback=None,
     ):
         """Count total peaks across the entire file in bounded chunks."""
         total_duration = reader.total_samples / reader.sample_rate
-        chunk_sec = max_slice_points / reader.sample_rate
         channel_indices = self._channel_indices_for(channel_choice)
         total_peaks = initial_count
         t = start_from_sec
@@ -502,9 +506,9 @@ class SignalApp(QWidget):
         channel_choice = self.channel_combo.currentText()
         parameters = self.analysis_parameters
 
-        # Cap slice length to max_slice_points raw samples for large files
+        # Cap loaded slice length to 2x visible slice length for off-screen buffering
         total_duration = self.reader.total_samples / self.reader.sample_rate
-        max_window_sec = min(total_duration, self.max_slice_points / self.reader.sample_rate)
+        max_window_sec = min(total_duration, self.visible_slice_seconds * 2.0)
         if start_sec is None or end_sec is None:
             start_sec = 0.0
             end_sec = max_window_sec
@@ -542,8 +546,10 @@ class SignalApp(QWidget):
 
         slice_peak_count = sum(len(peak_set.x) for peak_set in result.peak_sets)
         total_duration = self.reader.total_samples / self.reader.sample_rate
+        visible_sec = float(self.visible_slice_seconds)
+        loaded_window_sec = visible_sec * 2.0
 
-        if self.reader.total_samples <= self.max_slice_points:
+        if total_duration <= loaded_window_sec + 1e-9:
             self.total_peak_count = slice_peak_count
         else:
             # Show already-detected peaks immediately while background counting finishes
@@ -562,7 +568,7 @@ class SignalApp(QWidget):
                     self.channel_combo.currentText(),
                     self.active_analyses,
                     {k: dict(v) for k, v in self.analysis_parameters.items()},
-                    self.max_slice_points,
+                    loaded_window_sec,
                 )
                 count_worker.signals.progress.connect(
                     lambda val, cid=count_id: self._on_total_peak_count_progress(cid, val)
@@ -578,11 +584,7 @@ class SignalApp(QWidget):
             self.action_param_window.setChecked(True)
 
         x_limits = (0.0, total_duration) if total_duration > 0 else None
-        # Keep half of the loaded slice off-screen as buffer on large files
-        if total_duration > 0 and self.reader.total_samples > self.max_slice_points:
-            max_x_range = (self.max_slice_points / self.reader.sample_rate) * 0.5
-        else:
-            max_x_range = total_duration if total_duration > 0 else None
+        max_x_range = min(total_duration, visible_sec) if total_duration > 0 else None
 
         plot_signal(
             self.plot_widget,
@@ -611,7 +613,7 @@ class SignalApp(QWidget):
         self,
         functions: tuple[AnalysisFunction, ...],
         parameters: dict[str, dict],
-        max_slice_points: int,
+        visible_slice_seconds: int,
         remove_invisible_points: bool,
     ):
         """Update and save selected analysis functions, parameters, and general options,
@@ -625,11 +627,11 @@ class SignalApp(QWidget):
             functions != self.active_analyses
             or new_parameters != self.analysis_parameters
         )
-        max_slice_changed = max_slice_points != self.max_slice_points
+        visible_slice_changed = visible_slice_seconds != self.visible_slice_seconds
 
         self.active_analyses = functions
         self.analysis_parameters = new_parameters
-        self.max_slice_points = max_slice_points
+        self.visible_slice_seconds = visible_slice_seconds
         self.remove_invisible_points = remove_invisible_points
 
         # Save selected functions, parameters, and general options
@@ -637,9 +639,9 @@ class SignalApp(QWidget):
 
         # Update plot if reader and data are available
         if hasattr(self, "reader") and self.reader is not None and self.reader.data is not None:
-            if analyses_changed or max_slice_changed:
+            if analyses_changed or visible_slice_changed:
                 self._invalidate_total_peak_count()
-                if max_slice_changed and self.loaded_range is not None:
+                if visible_slice_changed and self.loaded_range is not None:
                     self._reload_visible_slice(
                         force=True,
                         reset_y_range=analyses_changed,

@@ -2,6 +2,7 @@ import ast
 from collections.abc import Mapping, Sequence
 
 from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtGui import QValidator
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
     QFrame, QMessageBox, QPushButton, QScrollArea, QSpinBox, QToolButton,
@@ -9,6 +10,41 @@ from PySide6.QtWidgets import (
 )
 
 from peak_finder import AnalysisFunction
+
+
+class _DurationSpinBox(QSpinBox):
+    """QSpinBox displaying seconds in `m:ss` format (e.g. `3:00`)."""
+
+    def textFromValue(self, value: int) -> str:
+        minutes, secs = divmod(max(0, value), 60)
+        return f"{minutes}:{secs:02d}"
+
+    def valueFromText(self, text: str) -> int:
+        s = text.strip()
+        if ":" in s:
+            m_str, sec_str = s.split(":", 1)
+            minutes = int(m_str) if m_str else 0
+            secs = int(sec_str) if sec_str else 0
+            return minutes * 60 + secs
+        return int(s) * 60
+
+    def validate(self, text: str, pos: int):
+        s = text.strip()
+        if not s:
+            return (QValidator.State.Intermediate, text, pos)
+        if s.isdigit():
+            return (QValidator.State.Acceptable, text, pos)
+        if ":" in s:
+            parts = s.split(":")
+            if (
+                len(parts) == 2
+                and (parts[0] == "" or parts[0].isdigit())
+                and (parts[1] == "" or (parts[1].isdigit() and len(parts[1]) <= 2))
+            ):
+                if parts[0].isdigit() and parts[1].isdigit() and int(parts[1]) < 60:
+                    return (QValidator.State.Acceptable, text, pos)
+                return (QValidator.State.Intermediate, text, pos)
+        return (QValidator.State.Invalid, text, pos)
 
 
 class _CheckboxLabel(QLabel):
@@ -26,28 +62,6 @@ class _CheckboxLabel(QLabel):
         super().mouseReleaseEvent(event)
 
 
-class _PercentageSpinBox(QSpinBox):
-    """QSpinBox whose up/down arrow buttons increase or decrease the value by 10%."""
-
-    def __init__(self, step_percent: float = 0.1, parent=None):
-        super().__init__(parent)
-        self._step_percent = step_percent
-
-    def stepBy(self, steps: int):
-        if steps == 0:
-            return
-        current = self.value()
-        if steps > 0:
-            new_val = int(round(current * ((1.0 + self._step_percent) ** steps)))
-            if new_val <= current:
-                new_val = current + steps
-        else:
-            new_val = int(round(current * ((1.0 - self._step_percent) ** (-steps))))
-            if new_val >= current:
-                new_val = current + steps
-        self.setValue(max(self.minimum(), min(self.maximum(), new_val)))
-
-
 class FunctionsParametersDialog(QDialog):
     """Dialog for selecting signal analysis functions and editing their parameters.
     The changes made here are only saved once "Apply" is clicked.
@@ -62,7 +76,7 @@ class FunctionsParametersDialog(QDialog):
                  analyses: Sequence[AnalysisFunction],
                  selected_analyses: Sequence[AnalysisFunction],
                  parent=None,
-                 default_max_slice_points: int = 20_000_000,
+                 default_visible_slice_seconds: int = 240,
                  default_remove_invisible_points: bool = True):
         super().__init__(parent)
 
@@ -150,16 +164,16 @@ class FunctionsParametersDialog(QDialog):
         general_section = QGroupBox("General graph options")
         general_form = QFormLayout(general_section)
 
-        self.max_slice_points_spinbox = _PercentageSpinBox(step_percent=0.1)
-        self.max_slice_points_spinbox.setRange(1, 2_147_483_647)
-        self.max_slice_points_spinbox.setGroupSeparatorShown(True)
-        self.max_slice_points_spinbox.setValue(
-            max(1, min(2_147_483_647, int(default_max_slice_points)))
+        self.visible_slice_spinbox = _DurationSpinBox()
+        self.visible_slice_spinbox.setRange(1, 600_000)
+        self.visible_slice_spinbox.setSingleStep(60)
+        self.visible_slice_spinbox.setValue(
+            max(1, min(600_000, int(default_visible_slice_seconds)))
         )
-        self.max_slice_points_spinbox.setToolTip(
-            "Maximum number of raw samples loaded and analyzed per slice on large files (arrows step by ±10%)"
+        self.visible_slice_spinbox.setToolTip(
+            "Length of the visible slice in m:ss (arrows step by ±1 min)"
         )
-        general_form.addRow("Max points visible", self.max_slice_points_spinbox)
+        general_form.addRow("Length of visible slice", self.visible_slice_spinbox)
 
         remove_invisible_tooltip = (
             "Auto-downsample plotted curves to screen resolution (peak mode) for better performance"
@@ -224,26 +238,26 @@ class FunctionsParametersDialog(QDialog):
         emit `changes_applied` if all values were valid.
         """
         try:
-            max_slice_points, remove_invisible_points = self.get_general_options()
+            visible_slice_seconds, remove_invisible_points = self.get_general_options()
             selected_analyses, parameters = self.get_selected_functions_and_parameters()
         except ValueError as exc:
             QMessageBox.warning(self, "Invalid analysis parameter", str(exc))
             return
 
         self.changes_applied.emit(
-            selected_analyses, parameters, max_slice_points, remove_invisible_points
+            selected_analyses, parameters, visible_slice_seconds, remove_invisible_points
         )
 
-    def set_general_options(self, max_slice_points: int, remove_invisible_points: bool):
+    def set_general_options(self, visible_slice_seconds: int, remove_invisible_points: bool):
         """Set the displayed general slicing and plot options."""
-        clamped = max(self.max_slice_points_spinbox.minimum(), min(self.max_slice_points_spinbox.maximum(), int(max_slice_points)))
-        self.max_slice_points_spinbox.setValue(clamped)
+        clamped = max(self.visible_slice_spinbox.minimum(), min(self.visible_slice_spinbox.maximum(), int(visible_slice_seconds)))
+        self.visible_slice_spinbox.setValue(clamped)
         self.remove_invisible_points_checkbox.setChecked(bool(remove_invisible_points))
 
     def get_general_options(self) -> tuple[int, bool]:
-        """Return evaluated `(max_slice_points, remove_invisible_points)`."""
-        self.max_slice_points_spinbox.interpretText()
-        return self.max_slice_points_spinbox.value(), self.remove_invisible_points_checkbox.isChecked()
+        """Return evaluated `(visible_slice_seconds, remove_invisible_points)`."""
+        self.visible_slice_spinbox.interpretText()
+        return self.visible_slice_spinbox.value(), self.remove_invisible_points_checkbox.isChecked()
 
     def set_selected_functions_and_parameters(self,
                                               functions: Sequence[AnalysisFunction],
