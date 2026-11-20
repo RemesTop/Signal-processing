@@ -44,17 +44,17 @@ The venv is used to keep the project packages separate from the rest of the Pyth
 After launching the application you can
 
 1. Select a `.csv` or `.dat` signal file to read using the "Browse" button.
-   - A csv file will be converted to a dat file, which can take a considerable amount of time for larger files. Once you have the dat file you can always open that to avoid the conversion process.
-2. Choose a downsampling method and factor.
-   - "Decimation" with a factor of n only uses one in every n values of the signal.
-   - "Max points" with a factor of n uses the maximum value in every n values of the signal.
-   - Selecting "None" or setting the factor to 1 does no downsampling.
-3. Select which channels to analyze.
+   - A csv file will be converted to a dat file in the background using multiple CPU threads. Once you have the dat file you can open that directly to skip converting it again.
+2. Select which channels to analyze.
    - The signal files are expected to contain two channels of data.
    - If only one is needed, you can select that from the dropdown to speed up the signal analysis.
-4. Click "Run" to run the signal analysis and show the results.
+3. Click "Run" to run the signal analysis and show the results.
 
-The graph will now display the signal in a time-amplitude graph. Found peaks are displayed as circles on the graph. The "Peaks" label in the top bar of the application shows the number of found peaks.
+The graph will now display the signal in a time-amplitude graph. Found peaks are marked on the graph, and the title above the graph shows the total file duration, total peak count, and active analysis functions.
+
+### Large file handling
+
+Very large recordings (over 20 million samples) are not loaded into memory all at once. Instead, the app reads the `.dat` file in slices from disk as you pan along the X axis, prefetching the next section before you reach the edge so the graph stays responsive. While you view the first part of a large file, the remaining slices are counted in the background and the total peak count above the graph updates live as it finishes.
 
 ### Editing the signal processing and peak finding
 

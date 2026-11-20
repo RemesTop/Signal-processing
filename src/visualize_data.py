@@ -19,6 +19,48 @@ DEFAULT_PEAKSET_SYMBOLS = {
 }
 
 
+class TimeAxisItem(pg.AxisItem):
+    """Bottom time axis showing seconds for short ranges and m:ss / h:mm:ss for longer ranges."""
+
+    _TIME_STEPS = (15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.enableAutoSIPrefix(False)
+
+    def tickSpacing(self, minVal: float, maxVal: float, size: float):
+        span = abs(maxVal - minVal)
+        if span < 60:
+            return super().tickSpacing(minVal, maxVal, size)
+        target = span / max(3.0, size / 90.0)
+        major = next((s for s in self._TIME_STEPS if s >= target), self._TIME_STEPS[-1])
+        minor = major / 5 if major in (15, 300, 600, 900) else major / 4
+        return [(major, 0), (minor, 0)]
+
+    def tickStrings(self, values, scale, spacing):
+        if not values:
+            return []
+        decimals = max(0, min(6, int(np.ceil(-np.log10(spacing))))) if spacing > 0 else 0
+        max_abs = max(abs(v) for v in values)
+        if max_abs < 60:
+            return [f"{v:.{decimals}f} s" for v in values]
+
+        show_hours = max_abs >= 3600
+        width = 2 + (decimals + 1 if decimals else 0)
+        labels = []
+        for v in values:
+            sign = "-" if v < 0 else ""
+            total = round(abs(v), decimals)
+            hours, rem = divmod(total, 3600)
+            minutes, secs = divmod(rem, 60)
+            sec_str = f"{secs:0{width}.{decimals}f}"
+            if show_hours:
+                labels.append(f"{sign}{int(hours)}:{int(minutes):02d}:{sec_str}")
+            else:
+                labels.append(f"{sign}{int(total // 60)}:{sec_str}")
+        return labels
+
+
 def make_peak_tip(peak_set):
     """Return a tooltip function for one peak set.
 
@@ -35,22 +77,48 @@ def make_peak_tip(peak_set):
         return "\n".join(lines)
     return tip
 
-def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
+def set_plot_downsampling(plot_widget: pg.PlotWidget, enabled: bool):
+    """Enable or disable automatic peak downsampling on `plot_widget`."""
+    plot_item = plot_widget.getPlotItem()
+    if enabled:
+        plot_item.setDownsampling(auto=True, mode="peak")
+    else:
+        plot_item.setDownsampling(ds=False, auto=False)
+    plot_item.updateDownsampling()
+    plot_widget.update()
+
+
+def plot_signal(
+    plot_widget: pg.PlotWidget,
+    result: AnalysisResult,
+    x_limits: tuple[float, float] | None = None,
+    max_x_range: float | None = None,
+    reset_x_range: bool = True,
+    reset_y_range: bool = True,
+    remove_invisible_points: bool = True,
+    fit_x_range: bool = False,
+):
     """Populate `plot_widget` with the lines and peak sets from `result`."""
     plot_widget.clear()
     plot_item = plot_widget.getPlotItem()
     view_box = plot_item.getViewBox()
+    prev_x_min, prev_x_max = view_box.viewRange()[0]
 
-    # Update the zoom limits of the plot widget
+    # Update the zoom/pan limits (use full file bounds when loading in slices)
     time = result.slice.time
-    if time.size:
+    if x_limits is not None:
+        x_min, x_max = x_limits
+        max_range = max_x_range if max_x_range is not None else (x_max - x_min)
+        min_range = min(2e-4, max_range) if max_range > 0 else 2e-4
+        view_box.setLimits(xMin=x_min, xMax=x_max, maxXRange=max_range, minXRange=min_range)
+    elif time.size:
         view_box.setLimits(xMin=time.min(), xMax=time.max(), maxXRange=time.max() - time.min(), minXRange=2e-4)
     else:
         view_box.setLimits(xMin=None, xMax=None, maxXRange=None, minXRange=2e-4)
 
-    # Clip to visible view and auto-downsample to screen resolution for performance
+    # Clip to visible view and optionally auto-downsample to screen resolution for performance
     plot_item.setClipToView(True)
-    plot_item.setDownsampling(auto=True, mode="peak")
+    set_plot_downsampling(plot_widget, remove_invisible_points)
 
     if plot_item.legend is None:
         plot_item.addLegend()
@@ -87,9 +155,26 @@ def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
         item.scatter.opts["hoverSize"] = 13
         item.scatter.opts["tip"] = make_peak_tip(peak_set)
 
-    # Center and fit the graph view to the currently plotted channel(s)
-    plot_widget.autoRange()
-    view_box.enableAutoRange(axis=pg.ViewBox.YAxis)
+    if reset_x_range:
+        # Fit initial X range (showing up to max_x_range so extra slice data is buffered off-screen)
+        if x_limits is not None and max_x_range is not None:
+            view_box.setXRange(x_limits[0], min(x_limits[1], x_limits[0] + max_x_range), padding=0)
+        else:
+            view_box.enableAutoRange(axis=pg.ViewBox.XAxis)
+            view_box.updateAutoRange()
+            view_box.disableAutoRange(axis=pg.ViewBox.XAxis)
+    elif x_limits is not None and max_x_range is not None and (
+        fit_x_range or (prev_x_max - prev_x_min) > max_x_range
+    ):
+        # Resize X range around the previous center when max_slice_points changed or max_x_range shrunk
+        center = (prev_x_min + prev_x_max) / 2
+        new_min = max(x_limits[0], min(center - max_x_range / 2, x_limits[1] - max_x_range))
+        view_box.setXRange(new_min, min(x_limits[1], new_min + max_x_range), padding=0)
+    if reset_y_range:
+        # Fit Y once and lock it so the Y axis does not rescale while panning
+        view_box.enableAutoRange(axis=pg.ViewBox.YAxis)
+        view_box.updateAutoRange()
+        view_box.disableAutoRange(axis=pg.ViewBox.YAxis)
 
 
 # Main method for testing the visualizer only

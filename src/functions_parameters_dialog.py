@@ -2,13 +2,49 @@ import ast
 from collections.abc import Mapping, Sequence
 
 from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtGui import QValidator
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-    QFrame, QMessageBox, QPushButton, QScrollArea, QToolButton, QVBoxLayout,
-    QWidget
+    QFrame, QMessageBox, QPushButton, QScrollArea, QSpinBox, QToolButton,
+    QVBoxLayout, QWidget
 )
 
 from peak_finder import AnalysisFunction
+
+
+class _DurationSpinBox(QSpinBox):
+    """QSpinBox displaying seconds in `m:ss` format (e.g. `3:00`)."""
+
+    def textFromValue(self, value: int) -> str:
+        minutes, secs = divmod(max(0, value), 60)
+        return f"{minutes}:{secs:02d}"
+
+    def valueFromText(self, text: str) -> int:
+        s = text.strip()
+        if ":" in s:
+            m_str, sec_str = s.split(":", 1)
+            minutes = int(m_str) if m_str else 0
+            secs = int(sec_str) if sec_str else 0
+            return minutes * 60 + secs
+        return int(s) * 60
+
+    def validate(self, text: str, pos: int):
+        s = text.strip()
+        if not s:
+            return (QValidator.State.Intermediate, text, pos)
+        if s.isdigit():
+            return (QValidator.State.Acceptable, text, pos)
+        if ":" in s:
+            parts = s.split(":")
+            if (
+                len(parts) == 2
+                and (parts[0] == "" or parts[0].isdigit())
+                and (parts[1] == "" or (parts[1].isdigit() and len(parts[1]) <= 2))
+            ):
+                if parts[0].isdigit() and parts[1].isdigit() and int(parts[1]) < 60:
+                    return (QValidator.State.Acceptable, text, pos)
+                return (QValidator.State.Intermediate, text, pos)
+        return (QValidator.State.Invalid, text, pos)
 
 
 class _CheckboxLabel(QLabel):
@@ -30,7 +66,7 @@ class FunctionsParametersDialog(QDialog):
     """Dialog for selecting signal analysis functions and editing their parameters.
     The changes made here are only saved once "Apply" is clicked.
     """
-    changes_applied = Signal(tuple, dict)
+    changes_applied = Signal(tuple, dict, int, bool)
     closed = Signal()
 
     FUNCS_AREA_WIDTH = 180
@@ -39,7 +75,9 @@ class FunctionsParametersDialog(QDialog):
     def __init__(self,
                  analyses: Sequence[AnalysisFunction],
                  selected_analyses: Sequence[AnalysisFunction],
-                 parent=None):
+                 parent=None,
+                 default_visible_slice_seconds: int = 240,
+                 default_remove_invisible_points: bool = True):
         super().__init__(parent)
 
         self.analyses = tuple(analyses)
@@ -48,6 +86,7 @@ class FunctionsParametersDialog(QDialog):
         self.fields: dict[str, dict[str, QLineEdit]] = {}
         self.sections: dict[str, QGroupBox] = {}
         self.checkboxes: dict[str, QCheckBox] = {}
+        self.stored_parameters: Mapping[str, Mapping[str, object]] = {}
 
         self.setWindowTitle("Analysis functions and parameters")
         self.resize(self.FUNCS_AREA_WIDTH + self.PARAMS_AREA_WIDTH, 600)
@@ -121,6 +160,37 @@ class FunctionsParametersDialog(QDialog):
         params_layout = QVBoxLayout(params_content)
         params_layout.setContentsMargins(0, 0, 6, 0)
 
+        # General slicing and display options at the top of the parameters panel
+        general_section = QGroupBox("General graph options")
+        general_form = QFormLayout(general_section)
+
+        self.visible_slice_spinbox = _DurationSpinBox()
+        self.visible_slice_spinbox.setRange(1, 600_000)
+        self.visible_slice_spinbox.setSingleStep(60)
+        self.visible_slice_spinbox.setValue(
+            max(1, min(600_000, int(default_visible_slice_seconds)))
+        )
+        self.visible_slice_spinbox.setToolTip(
+            "Length of the visible slice in m:ss (arrows step by ±1 min)"
+        )
+        general_form.addRow("Length of visible slice", self.visible_slice_spinbox)
+
+        remove_invisible_tooltip = (
+            "Auto-downsample plotted curves to screen resolution (peak mode) for better performance"
+        )
+        self.remove_invisible_points_checkbox = QCheckBox()
+        self.remove_invisible_points_checkbox.setChecked(default_remove_invisible_points)
+        self.remove_invisible_points_checkbox.setToolTip(remove_invisible_tooltip)
+        self.remove_invisible_points_checkbox.setAccessibleName("Remove invisible points")
+
+        remove_invisible_label = _CheckboxLabel("Remove invisible points")
+        remove_invisible_label.setBuddy(self.remove_invisible_points_checkbox)
+        remove_invisible_label.setToolTip(remove_invisible_tooltip)
+        remove_invisible_label.clicked.connect(self.remove_invisible_points_checkbox.click)
+        general_form.addRow(remove_invisible_label, self.remove_invisible_points_checkbox)
+
+        params_layout.addWidget(general_section)
+
         # Forms for editing the parameters
         for analysis in self.analyses:
             section = QGroupBox(analysis.title)
@@ -164,17 +234,30 @@ class FunctionsParametersDialog(QDialog):
         layout.addLayout(hbox_buttons)
 
     def apply_parameters(self):
-        """Evaluate the parameters for each selected function and
-        emit `changes_applied` with the selected functions and their parameters
-        if the parameters were all valid.
+        """Evaluate the general options and parameters for each selected function and
+        emit `changes_applied` if all values were valid.
         """
         try:
+            visible_slice_seconds, remove_invisible_points = self.get_general_options()
             selected_analyses, parameters = self.get_selected_functions_and_parameters()
         except ValueError as exc:
             QMessageBox.warning(self, "Invalid analysis parameter", str(exc))
             return
 
-        self.changes_applied.emit(selected_analyses, parameters)
+        self.changes_applied.emit(
+            selected_analyses, parameters, visible_slice_seconds, remove_invisible_points
+        )
+
+    def set_general_options(self, visible_slice_seconds: int, remove_invisible_points: bool):
+        """Set the displayed general slicing and plot options."""
+        clamped = max(self.visible_slice_spinbox.minimum(), min(self.visible_slice_spinbox.maximum(), int(visible_slice_seconds)))
+        self.visible_slice_spinbox.setValue(clamped)
+        self.remove_invisible_points_checkbox.setChecked(bool(remove_invisible_points))
+
+    def get_general_options(self) -> tuple[int, bool]:
+        """Return evaluated `(visible_slice_seconds, remove_invisible_points)`."""
+        self.visible_slice_spinbox.interpretText()
+        return self.visible_slice_spinbox.value(), self.remove_invisible_points_checkbox.isChecked()
 
     def set_selected_functions_and_parameters(self,
                                               functions: Sequence[AnalysisFunction],
