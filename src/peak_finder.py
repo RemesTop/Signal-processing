@@ -255,16 +255,13 @@ def example_analysis(s: Slice, out: AnalysisResult):
 @analysis_function(
     "Raw signal with peaks",
     (
-        AnalysisParameter("used_downsample_factor", 1),
         *_find_peaks_parameters(
-            prominence=40)
+            prominence=40),
     ),
 )
 def raw_signal_with_peaks(s: Slice, out: AnalysisResult,
-                          used_downsample_factor: int = 1,
                           **peak_options):
-    """Basic peak detection without pre-processing. Specify the factor of any
-    downsampling that has already been done.
+    """Basic peak detection without pre-processing.
 
     **Line:**<br>
     Unprocessed.
@@ -275,7 +272,7 @@ def raw_signal_with_peaks(s: Slice, out: AnalysisResult,
     # TODO improve: these dynamic default values are troublesome because they don't show up in the parameter dialog
     # This value is used if the corresponding parameter is set to "None" in the parameter dialog, and this value
     # isn't communicated to the user in any way.
-    peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate) / used_downsample_factor))
+    peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate)))
     peak_options.setdefault("prominence", 40)
 
     # Filter and detect peaks only for requested channel(s) to optimize performance
@@ -300,8 +297,7 @@ def raw_signal_with_peaks(s: Slice, out: AnalysisResult,
 def scipy_decimation(s: Slice, out: AnalysisResult,
                      decimation_factor: int = 10,
                      **peak_options):
-    """SciPy's decimation and peak finding. Don't downsample the signal
-    before passing to this function.
+    """SciPy's decimation and peak finding.
 
     **Line:**<br>
     Decimated by a factor of 10 with `scipy.signal.decimate`.
@@ -338,7 +334,6 @@ def custom_decimation(s: Slice, out: AnalysisResult,
                       decimation_factor: int = 10,
                       **peak_options):
     """Low-pass filter and downsample, then SciPy peak finding.
-    Don't downsample the signal before passing to this function.
 
     **Line:**<br>
     Downsampled by a factor of 10 using `butterworth_lowpass_filter` and
@@ -384,7 +379,6 @@ def extra_lowpass(s: Slice, out: AnalysisResult,
                   lowpass_cutoff: float | None = 250,
                   **peak_options):
     """`custom_decimation` with an added low-pass filter after downsampling.
-    Don't downsample the signal before passing to this function.
 
     **Line:**<br>
     Downsampled by a factor of 10 using `butterworth_lowpass_filter` and
@@ -438,7 +432,6 @@ def band_pass_filter(s: Slice, out: AnalysisResult,
                      high_cutoff: float = 1000,
                      **peak_options):
     """Anti-alias, downsample, band-pass filter, and detect peaks.
-    Don't downsample the signal before passing to this function.
 
     **Line:**<br>
     Downsampled by the specified factor using `butterworth_lowpass_filter`
@@ -496,7 +489,6 @@ def baseline_correction(s: Slice, out: AnalysisResult,
                         bias: float = None,
                         **peak_options):
     """Low-pass filter, downsample, and baseline correction. Then SciPy peak finding.
-    Don't downsample the signal before passing to this function.
 
     **Line:**<br>
     Downsampled by a factor of 10 using `butterworth_lowpass_filter` and
@@ -555,8 +547,8 @@ def baseline_correction_pybaselines(s: Slice, out: AnalysisResult,
                                     decimation_factor: int = 10,
                                     half_window: int = 960,
                                     **peak_options):
-    """Low-pass filter, downsample, and baseline correction with `pybaselines`. Then SciPy peak finding.
-    Don't downsample the signal before passing to this function.
+    """Low-pass filter, downsample, and baseline correction with `pybaselines`.
+    Then SciPy peak finding.
 
     **Line:**<br>
     Downsampled by a factor of 10 using `butterworth_lowpass_filter` and
