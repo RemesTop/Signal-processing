@@ -8,7 +8,7 @@ import sys
 
 import numpy as np
 from scipy import ndimage
-from scipy.signal import find_peaks, peak_widths, butter, sosfiltfilt, decimate
+from scipy.signal import find_peaks, peak_widths, peak_prominences, butter, sosfiltfilt, decimate
 try:
     import pybaselines
 except ImportError:
@@ -133,13 +133,15 @@ def remove_baseline_morphological(
     block_size: int = 10,
     baseline_window: int = 1200,
     bias: float | None = None
-) -> np.ndarray:
+) -> tuple[np.ndarray, float]:
     """Remove a slow varying baseline estimated with a morphological opening.
 
     The opening size is based on `baseline_window`, which is measured in
     samples of the input signal. The opening uses medians of `block_size`
     samples to reduce sensitivity to noise.
     If `bias` is `None`, its value is estimated as the median residual.
+    Returns a tuple with the data that has the baseline removed and the
+    baseline that was subtracted.
     """
     if not isinstance(block_size, (int, np.integer)) or block_size < 1:
         raise ValueError("block_size must be a positive integer")
@@ -169,7 +171,7 @@ def remove_baseline_morphological(
     # Remove constant offset (estimated as the median residual between signal and baseline)
     if bias is None:
         bias = float(np.median(x - baseline))
-    return x - (baseline + bias)
+    return (x - (baseline + bias), baseline + bias)
 
 
 
@@ -208,14 +210,42 @@ def scipy_find_peaks(out: AnalysisResult,
                      x: np.ndarray,
                      channel: int,
                      label: str,
-                     peak_options: dict):
+                     peak_options: dict,
+                     original_x: np.ndarray = None,
+                     original_prominence_and_width: bool = False):
     """Convenience function for calling `scipy.signal.find_peaks`
     and adding the result to the AnalysisResult.
+    
+    If `original_x` is not `None`, it is used to get additional properties
+    for the found peaks. The heights of the peaks are automatically added as
+    "orig_height", and if `original_prominence_and_width` is `True`, peak
+    prominence and width are also added as "orig_prominence" and "orig_width".
+    Both `x` and `original_x` should represent the same slice of data.
+    Any difference in sample rate is detected based on the number of samples
+    in these arrays.
     """
     # Make sure to only pass the appropriate parameters to find_peaks
     peak_options = {key: name for key, name in peak_options.items() if key in
                     (param.name for param in FIND_PEAKS_PARAMETERS)}
     idx, properties = find_peaks(x, **peak_options)
+    
+    # Also get properties for the peaks from the original data
+    if original_x is not None:
+        # Scale the indices of the peaks if the arrays are different sizes
+        original_idx = idx
+        decimated_by = np.size(original_x) / np.size(x)
+        if decimated_by != 1:
+            original_idx = np.asarray(idx * decimated_by, dtype=int)
+        
+        # Get the height of all peaks
+        properties["orig_height"] = original_x[original_idx]
+        
+        if original_prominence_and_width:
+            # Get the prominences and widths of all peaks
+            prominences = peak_prominences(original_x, original_idx)
+            properties["orig_prominence"] = prominences
+            properties["orig_width"] = peak_widths(original_x, original_idx, prominences)
+    
     out.peaks(time[idx], x[idx], channel, label, properties)
 
 
@@ -286,7 +316,7 @@ def raw_signal_with_peaks(s: Slice, out: AnalysisResult,
         out.line(s.time, x, ch, "Raw")
         
         # Find peaks
-        scipy_find_peaks(out, s.time, x, ch, "Raw", peak_options)
+        scipy_find_peaks(out, s.time, x, ch, "Raw", peak_options, s.data[:, ch])
 
 
 @analysis_function(
@@ -323,7 +353,7 @@ def scipy_decimation(s: Slice, out: AnalysisResult,
         out.line(time, x, ch, "Decimated SciPy")
         
         # Find peaks
-        scipy_find_peaks(out, time, x, ch, "Decimated SciPy", peak_options)
+        scipy_find_peaks(out, time, x, ch, "Decimated SciPy", peak_options, s.data[:, ch])
 
 
 @analysis_function(
@@ -367,7 +397,7 @@ def custom_decimation(s: Slice, out: AnalysisResult,
         out.line(time, x, ch, "Decimated custom")
         
         # Find peaks
-        scipy_find_peaks(out, time, x, ch, "Decimated custom", peak_options)
+        scipy_find_peaks(out, time, x, ch, "Decimated custom", peak_options, s.data[:, ch])
 
 
 @analysis_function(
@@ -419,7 +449,7 @@ def extra_lowpass(s: Slice, out: AnalysisResult,
         out.line(time, x, ch, "Low-pass filtered")
         
         # Find peaks
-        scipy_find_peaks(out, time, x, ch, "Low-pass filtered", peak_options)
+        scipy_find_peaks(out, time, x, ch, "Low-pass filtered", peak_options, s.data[:, ch])
 
 
 @analysis_function(
@@ -475,7 +505,7 @@ def band_pass_filter(s: Slice, out: AnalysisResult,
 
         out.line(time, x, ch, "Band-pass filtered")
 
-        scipy_find_peaks(out, time, x, ch, "Band-pass filtered", peak_options)
+        scipy_find_peaks(out, time, x, ch, "Band-pass filtered", peak_options, s.data[:, ch])
 
 
 @analysis_function(
@@ -529,7 +559,7 @@ def baseline_correction(s: Slice, out: AnalysisResult,
             x = downsample(x, decimation_factor)
             
         # Subtract the morphological opening baseline
-        x = remove_baseline_morphological(
+        x, baseline = remove_baseline_morphological(
             x,
             block_size=block_size,
             baseline_window=baseline_window,
@@ -538,8 +568,16 @@ def baseline_correction(s: Slice, out: AnalysisResult,
         
         out.line(time, x, ch, "Baseline custom")
         
+        # Interpolate the baseline to the original data length and subtract that from it
+        original_length = s.data.shape[0]
+        baseline_original = np.interp(
+            np.arange(original_length),
+            np.linspace(0, original_length - 1, baseline.size),
+            baseline
+        )
+        
         # Find peaks
-        scipy_find_peaks(out, time, x, ch, "Baseline custom", peak_options)
+        scipy_find_peaks(out, time, x, ch, "Baseline custom", peak_options, s.data[:, ch] - baseline_original)
 
 
 @analysis_function(
@@ -604,8 +642,16 @@ def baseline_correction_pybaselines(s: Slice, out: AnalysisResult,
         
         out.line(time, x, ch, "Baseline pybaselines")
         
+        # Interpolate the baseline to the original data length and subtract that from it
+        original_length = s.data.shape[0]
+        baseline_original = np.interp(
+            np.arange(original_length),
+            np.linspace(0, original_length - 1, baseline.size),
+            baseline
+        )
+        
         # Find peaks
-        scipy_find_peaks(out, time, x, ch, "Baseline pybaselines", peak_options)
+        scipy_find_peaks(out, time, x, ch, "Baseline pybaselines", peak_options, s.data[:, ch] - baseline_original)
 
 
 

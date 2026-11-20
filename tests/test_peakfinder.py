@@ -306,27 +306,27 @@ class TestButterworthLowpass:
 
 class TestRemoveBaselineMorphological:
     def test_constant_signal_becomes_zero(self):
-        y = pf.remove_baseline_morphological(np.full(1000, 100.0))
+        y, _ = pf.remove_baseline_morphological(np.full(1000, 100.0))
         np.testing.assert_allclose(y, 0, atol=1e-9)
 
     def test_explicit_bias_is_subtracted(self):
         # baseline == 100 everywhere, so output is x - (100 + bias)
-        y = pf.remove_baseline_morphological(np.full(1000, 100.0), bias=5.0)
+        y, _ = pf.remove_baseline_morphological(np.full(1000, 100.0), bias=5.0)
         np.testing.assert_allclose(y, -5.0, atol=1e-9)
 
     def test_bias_zero_is_respected_not_replaced_by_estimate(self):
         # Noisy data: the baseline is a lower envelope, so the estimated bias
         # (median residual) is clearly non-zero.
         x = 50 + np.random.default_rng(0).normal(size=1000)
-        y_zero = pf.remove_baseline_morphological(x, bias=0.0)
-        y_auto = pf.remove_baseline_morphological(x)
+        y_zero, _ = pf.remove_baseline_morphological(x, bias=0.0)
+        y_auto, _ = pf.remove_baseline_morphological(x)
         assert np.median(y_auto) == pytest.approx(0.0, abs=1e-9)  # bias=None -> estimated
         assert abs(np.median(y_zero)) > 0.1                       # bias=0 is used as given
 
     @pytest.mark.parametrize("n", [1, 5, 10, 11, 99, 100, 1234])
     def test_output_length_matches_input(self, n):
         x = np.random.default_rng(0).normal(size=n)
-        assert pf.remove_baseline_morphological(x).shape == (n,)
+        assert pf.remove_baseline_morphological(x)[0].shape == (n,)
 
     def test_input_is_not_modified(self):
         x = np.random.default_rng(0).normal(size=500)
@@ -339,7 +339,7 @@ class TestRemoveBaselineMorphological:
         ramp = 0.01 * np.arange(n)           # slow drift, 0 -> 20
         peak = np.zeros(n)
         peak[995:1005] = 50                   # narrow peak
-        y = pf.remove_baseline_morphological(ramp + peak, block_size=10, baseline_window=400)
+        y, _ = pf.remove_baseline_morphological(ramp + peak, block_size=10, baseline_window=400)
 
         assert abs(np.median(y)) < 1.0                        # drift removed
         assert 990 <= np.argmax(y) <= 1010                    # peak position kept
@@ -356,12 +356,12 @@ class TestRemoveBaselineMorphological:
             pf.remove_baseline_morphological(np.zeros(100), baseline_window=bad)
 
     def test_numpy_integer_parameters_accepted(self):
-        y = pf.remove_baseline_morphological(
+        y, _ = pf.remove_baseline_morphological(
             np.zeros(100), block_size=np.int64(10), baseline_window=np.int32(50))
         assert y.shape == (100,)
 
     def test_signal_shorter_than_block_size(self):
-        y = pf.remove_baseline_morphological(np.array([1.0, 2.0, 3.0]), block_size=10)
+        y, _ = pf.remove_baseline_morphological(np.array([1.0, 2.0, 3.0]), block_size=10)
         assert y.shape == (3,)
 
 
