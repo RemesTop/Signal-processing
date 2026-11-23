@@ -35,11 +35,17 @@ def make_peak_tip(peak_set):
         return "\n".join(lines)
     return tip
 
-def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
-    """Populate `plot_widget` with the lines and peak sets from `result`."""
-    plot_widget.clear()
+def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult, preserve_view_range: bool = False):
+    """Populate `plot_widget` with the lines and peak sets from `result`.
+    
+    If `preserve_view_range` is `True`, the current zoom and positioning
+    of the graph are preserved (unless the data doesn't reach there).
+    Otherwise the graph is fitted to show the entire data.
+    """
     plot_item = plot_widget.getPlotItem()
     view_box = plot_item.getViewBox()
+    old_view_range = view_box.viewRange()
+    plot_widget.clear()
 
     # Update the zoom limits of the plot widget
     time = result.slice.time
@@ -87,8 +93,26 @@ def plot_signal(plot_widget: pg.PlotWidget, result: AnalysisResult):
         item.scatter.opts["hoverSize"] = 13
         item.scatter.opts["tip"] = make_peak_tip(peak_set)
 
-    # Center and fit the graph view to the currently plotted channel(s)
-    plot_widget.autoRange()
+    if not preserve_view_range:
+        # Show the entire result
+        if time.size:
+            view_box.disableAutoRange()
+            view_box.setRange(
+                xRange=(time.min(), time.max()),
+                padding=0,
+            )
+        else:
+            plot_widget.autoRange()
+    else:
+        # Keep the zoom and position
+        (x_range, y_range) = old_view_range
+        view_box.disableAutoRange()
+        view_box.setRange(
+            xRange=(x_range[0], x_range[1]),
+            yRange=(y_range[0], y_range[1]),
+            padding=0,
+        )
+    
     view_box.enableAutoRange(axis=pg.ViewBox.YAxis)
 
 

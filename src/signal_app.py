@@ -96,6 +96,8 @@ class SignalApp(QWidget):
         view_box.sigXRangeChanged.connect(self._fit_plot_y)
         self.factor_input.setPrefix("Factor: ")
 
+        self._preserve_view_range = False
+
         # Layout
         top_layout = QHBoxLayout()
         top_layout.addWidget(self.file_input)
@@ -288,12 +290,17 @@ class SignalApp(QWidget):
             )
         return result
 
-    def plot_data(self):
-        """Run signal analysis and plotting in a background thread."""
+    def plot_data(self, preserve_view=False):
+        """Run signal analysis and plotting in a background thread.
+        
+        If `preserve_view` is `True`, the current zoom and positioning of the
+        graph are preserved."""
         method = self.combo.currentText()
         factor = self.factor_input.value()
         channel_choice = self.channel_combo.currentText()
         parameters = self.analysis_parameters
+        # Store this because passing it to _on_analysis_finished through a lambda doesn't work very well
+        self._preserve_view_range = preserve_view
 
         self.btn.setEnabled(False)
         self.plot_widget.setTitle("Analyzing signal, please wait...")
@@ -319,7 +326,7 @@ class SignalApp(QWidget):
         # Show the parameter editing dialog
         self.action_param_window.setChecked(True)
 
-        plot_signal(self.plot_widget, result)
+        plot_signal(self.plot_widget, result, self._preserve_view_range)
         self.btn.setEnabled(True)
 
     def _on_analysis_error(self, err):
@@ -341,7 +348,7 @@ class SignalApp(QWidget):
         self.save_analysis_functions_and_parameters(evaluate=False)
         # Plot if reader and data available
         if hasattr(self, "reader") and self.reader is not None and self.reader.data is not None:
-            self.plot_data()
+            self.plot_data(preserve_view=True)
     
     
     # CSV to DAT conversion
