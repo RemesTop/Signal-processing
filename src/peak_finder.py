@@ -182,7 +182,9 @@ def remove_baseline_morphological(
 FIND_PEAKS_PARAMETERS = (
     AnalysisParameter("height", None, "Peak height"),
     AnalysisParameter("threshold", None, "Peak threshold", "Vertical distance to neighboring samples."),
-    AnalysisParameter("distance", None, "Peak distance", "Horizontal distance between peaks."),
+    AnalysisParameter("distance", None, "Peak distance",
+                      "If None: (0.005 * s.sample_rate) / decimation_factor"
+                      "\nHorizontal distance between peaks."),
     AnalysisParameter("prominence", 40, "Peak prominence"),
     AnalysisParameter("width", (None, None), "Peak width"),
     AnalysisParameter("wlen", None, "Peak wlen",
@@ -478,10 +480,10 @@ def band_pass_filter(s: Slice, out: AnalysisResult,
     (
         AnalysisParameter("decimation_factor", 10, "Decimation factor"),
         AnalysisParameter("block_size", 10, "Block size",
-                          "Size of the blocks that the data is divided into for median -> baseline calculation"),
+                          "Size of the blocks whose medians are used for baseline correction, in samples."),
         AnalysisParameter("baseline_window", 600, "Window size",
-                          "Size of the morphological opening in baseline correction, in samples."
-                          "\nIf None, defaults to (3 * 2000) // decimation_factor."),
+                          "If None: (3 * 2000) // decimation_factor"
+                          "\nSize of the morphological opening in baseline correction, in samples."),
         AnalysisParameter("bias", None, "Bias",
                           "Constant bias to subtract from the signal.\nIf None, estimated as the median residual."),
         *FIND_PEAKS_PARAMETERS
