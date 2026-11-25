@@ -57,9 +57,9 @@ def target(tmp_path):
 
 
 @pytest.fixture
-def small_rate(monkeypatch):
-    """Use a tiny sample rate so progress/flush logic is exercised with few rows."""
-    monkeypatch.setattr(signal_converter, "DEFAULT_SAMPLE_RATE", 2)
+def small_chunk(monkeypatch):
+    """Use a tiny chunk size so multi-chunk progress/cancel logic is exercised with few rows."""
+    monkeypatch.setattr(SignalConverter, "CHUNK_BYTES", 8)
 
 
 # ---------------------------------------------------------------- conversion output
@@ -113,12 +113,6 @@ class TestConversionOutput:
         assert SignalConverter().start(src, target) is True
         np.testing.assert_array_equal(read_binary(target), values.astype(np.int16))
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=IndexError,
-        reason="Known bug: blank rows in the middle are excluded from row_count, but "
-        "enumerate() still counts them, so the write index runs past the end of the memmap.",
-    )
     def test_blank_row_in_middle_of_file(self, tmp_path, target):
         src = write_csv(tmp_path / "s.csv", None, raw_lines=["1,2", "", "3,4"])
         SignalConverter().start(src, target)
@@ -166,25 +160,20 @@ class TestProgress:
         assert progress.values[0] == 0
         assert progress.values[-1] == 100
 
-    def test_exact_progress_sequence(self, source, target, small_rate):
-        # 5 rows, rate 2 -> updates at indices 0, 2, 4
+    def test_progress_reports_intermediate_steps(self, source, target, small_chunk):
         progress = FakeSignal()
         SignalConverter().start(source, target, progress_callback=progress)
-        assert progress.values == [0, 0.0, 40.0, 80.0, 100]
+        assert progress.values[0] == 0
+        assert progress.values[-1] == 100
+        assert len(progress.values) > 2
+        assert all(0 < v < 100 for v in progress.values[1:-1])
 
-    def test_progress_is_monotonic_and_bounded(self, tmp_path, target, small_rate):
+    def test_progress_is_monotonic_and_bounded(self, tmp_path, target, small_chunk):
         src = write_csv(tmp_path / "s.csv", [(i, i) for i in range(101)])
         progress = FakeSignal()
         SignalConverter().start(src, target, progress_callback=progress)
         assert progress.values == sorted(progress.values)
         assert all(0 <= v <= 100 for v in progress.values)
-
-    def test_progress_emitted_only_once_per_sample_rate_rows(self, tmp_path, target, small_rate):
-        src = write_csv(tmp_path / "s.csv", [(i, i) for i in range(10)])
-        progress = FakeSignal()
-        SignalConverter().start(src, target, progress_callback=progress)
-        # initial 0 + indices 0,2,4,6,8 + final 100
-        assert len(progress.values) == 1 + 5 + 1
 
 
 # ---------------------------------------------------------------- cancellation
@@ -217,22 +206,22 @@ class TestCancellation:
         assert not target.exists()  # binary file was never created
         assert progress.values == [0]
 
-    def test_cancel_while_writing_removes_target_file(self, source, target, small_rate):
+    def test_cancel_while_writing_removes_target_file(self, source, target, small_chunk):
         c = SignalConverter()
         progress = FakeSignal(c, cancel_on=2)  # first emit inside the write loop
         assert c.start(source, target, progress_callback=progress) is False
         assert not target.exists()
         assert 100 not in progress.values
 
-    def test_cancel_during_final_progress_emit(self, source, target, small_rate):
+    def test_cancel_during_final_progress_emit(self, source, target):
         c = SignalConverter()
-        # emits: 0, idx0, idx2, idx4, final 100 -> cancel on the 5th (final) one
-        progress = FakeSignal(c, cancel_on=5)
+        # Single chunk emits: 0, final 100 -> cancel on the 2nd (final) one
+        progress = FakeSignal(c, cancel_on=2)
         assert c.start(source, target, progress_callback=progress) is False
         assert not target.exists()
         assert progress.values[-1] == 0  # progress is reset after late cancellation
 
-    def test_can_run_again_after_cancel(self, source, target, small_rate):
+    def test_can_run_again_after_cancel(self, source, target, small_chunk):
         c = SignalConverter()
         c.start(source, target, progress_callback=FakeSignal(c, cancel_on=2))
         assert not target.exists()

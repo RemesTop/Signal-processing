@@ -1,10 +1,14 @@
-import csv
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+import io
+import os
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 from PySide6.QtCore import Signal
 
-from signal_constants import DEFAULT_SAMPLE_RATE
+# from signal_constants import DEFAULT_SAMPLE_RATE
 
 class SignalConverter:
     """Convert a CSV-signal file into a binary data file.
@@ -29,9 +33,25 @@ class SignalConverter:
 
     # Flag to indicate the conversion process should be cancelled.
     cancelled: bool = False
+    # Raw CSV bytes parsed per worker chunk
+    CHUNK_BYTES: int = 8 * 1024 * 1024
 
     def cancel(self):
         self.cancelled = True
+
+    @staticmethod
+    def _parse_chunk(raw_bytes: bytes) -> np.ndarray:
+        """Parse a CSV byte chunk into a contiguous C-order int16 array (releases GIL in C)."""
+        if not raw_bytes.strip():
+            return np.empty((0, 2), dtype=np.int16)
+        df = pd.read_csv(
+            io.BytesIO(raw_bytes),
+            header=None,
+            dtype=np.int16,
+            engine="c",
+            skip_blank_lines=True,
+        )
+        return np.ascontiguousarray(df.to_numpy(dtype=np.int16))
 
     def start(
         self,
@@ -40,70 +60,67 @@ class SignalConverter:
         progress_callback: Signal | None = None,
     ) -> bool:
         self.cancelled = False
+        source_signal_path = Path(source_signal_path)
+        target_signal_path = Path(target_signal_path)
 
         # Make sure the progress is at 0 %
         if progress_callback:
             progress_callback.emit(0)
+        if self.cancelled:
+            return False
 
-        # This is terrible: read each row from the file to count the number of rows
-        row_count = 0
-        with source_signal_path.open() as source_signal_file:
-            reader = csv.reader(source_signal_file)
-            next(reader)
-            for row in csv.reader(source_signal_file):
-                if not row:
-                    continue
-                row_count += 1
+        total_bytes = source_signal_path.stat().st_size
+        max_workers = os.cpu_count() or 1
+        pending = deque()
 
-                # Was the process cancelled during our reading?
-                if self.cancelled:
-                    return False
+        # Stream line-aligned chunks into a thread pool and write parsed int16 blocks in order
+        with source_signal_path.open("rb") as src:
+            header = src.readline()
+            if not header:
+                raise StopIteration
 
-        # Open a memory mapped binary file for writing. Set data type to 16-bit integers. Save both adc1 and adc2
-        # in their own columns as in the original file. Order refers to C and Fortran conventions of multidimensional
-        # array layouts: C uses row-major and Fortran column-major layouts (see f.ex. Wikipedia article on the topic
-        # https://en.wikipedia.org/wiki/Row-_and_column-major_order).
-        # NOTE: the binary file will not contain dtype, shape, or order information. They must be supplied manually.
-        data = np.memmap(
-            target_signal_path,
-            dtype=np.int16,
-            mode="w+",
-            offset=0,
-            shape=(row_count, 2),
-            order="C",
-        )
+            bytes_done = len(header)
+            with target_signal_path.open("wb") as dst, ThreadPoolExecutor(max_workers=max_workers) as pool:
+                while True:
+                    # Keep a bounded number of chunks in flight so memory stays small on huge files
+                    while len(pending) < max_workers * 2 and not self.cancelled:
+                        buf = src.read(self.CHUNK_BYTES)
+                        if not buf:
+                            break
+                        if not buf.endswith(b"\n"):
+                            buf += src.readline()
+                        pending.append((len(buf), pool.submit(self._parse_chunk, buf)))
 
-        # Read the CSV-file row-by-row writing it into the binary data file. This approach is slow, but it allows full
-        # control of the reading process - every 1 second of data, the progress bar is updated.
-        # Using some other reader that allows larger chunks could be more efficient than this.
-        with source_signal_path.open() as source_signal_file:
-            reader = csv.reader(source_signal_file)
-            next(reader)
-            for index, row in enumerate(reader):
-                if not row:
-                    continue
-                data[index, :] = row
-                if index % (DEFAULT_SAMPLE_RATE * 60) == 0:
-                    # Force the data array to write changes to disk. This presumably happens automatically too at
-                    # implementation-defined points, but this the API provided to the numpy users.
-                    data.flush()
-                if progress_callback and index % DEFAULT_SAMPLE_RATE == 0:
-                    progress_callback.emit((index / row_count) * 100)
+                    if not pending or self.cancelled:
+                        break
+
+                    chunk_len, future = pending.popleft()
+                    arr = future.result()
+                    if arr.size:
+                        dst.write(arr.tobytes())
+
+                    bytes_done += chunk_len
+                    if progress_callback and total_bytes > 0 and bytes_done < total_bytes:
+                        progress_callback.emit((bytes_done / total_bytes) * 100)
 
                 if self.cancelled:
-                    del data
-                    target_signal_path.unlink()  # Remove the binary data file
-                    return False
+                    for _, fut in pending:
+                        fut.cancel()
 
-        data.flush()  # again, once more force the array to write changes to disk
-        if not self.cancelled and progress_callback:
+        if self.cancelled:
+            if target_signal_path.exists():
+                target_signal_path.unlink()
+            return False
+
+        if progress_callback:
             # Finish the progress bar.
             progress_callback.emit(100)
-        del data
+
         if self.cancelled:
             if target_signal_path.exists():
                 target_signal_path.unlink()
             if progress_callback:
                 progress_callback.emit(0)
+            return False
 
-        return not self.cancelled
+        return True
