@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from PySide6.QtCore import Signal
 
-from signal_constants import DEFAULT_SAMPLE_RATE
+# from signal_constants import DEFAULT_SAMPLE_RATE
 
 class SignalConverter:
     """Convert a CSV-signal file into a binary data file.

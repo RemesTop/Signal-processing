@@ -586,7 +586,6 @@ def baseline_correction_pybaselines(s: Slice, out: AnalysisResult,
         baseline, params = pybaselines.morphological.jbcd(x, half_window=half_window)
         # baseline, params = pybaselines.whittaker.lsrpls(x)
         
-        print(params) # TEMP print for the parameters
         
         x -= baseline
         

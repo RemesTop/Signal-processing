@@ -15,7 +15,7 @@ Once you have the application running, see [Using the application](#using-the-ap
 
 Listed inside `requirements.txt`.
 
-You can install all requirements with venv:
+You can install all requirements with venv
 
 ### Use a virtual environment
 
@@ -34,7 +34,7 @@ Example:
 Then run scripts from the activated venv:
 
 ```powershell
-python read_data.py
+python signal_app.py
 ```
 
 The venv is used to keep the project packages separate from the rest of the Python installation on your computer.
@@ -54,7 +54,7 @@ The graph will now display the signal in a time-amplitude graph. Found peaks are
 
 ### Large file handling
 
-Very large recordings (over 20 million samples) are not loaded into memory all at once. Instead, the app reads the `.dat` file in slices from disk as you pan along the X axis, prefetching the next section before you reach the edge so the graph stays responsive. While you view the first part of a large file, the remaining slices are counted in the background and the total peak count above the graph updates live as it finishes.
+Very large recordings are not loaded into memory all at once. Instead, the app reads the `.dat` file in slices from disk as you pan along the X axis, prefetching the next section before you reach the edge so the graph stays responsive. While you view the first part of a large file, the remaining slices are counted in the background and the total peak count updates live as it finishes.
 
 ### Editing the signal processing and peak finding
 

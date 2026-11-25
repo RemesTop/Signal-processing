@@ -15,6 +15,7 @@ DEFAULT_LINE_COLORS = (
     "#ffaa00", "#00aaff", "#f34141", "#06cf17",
     "#bc56ec", "#abd47b", "#2743e0", "#8c564b"
 )
+DEFAULT_LINE_WIDTH = 2
 DEFAULT_PEAKSET_COLORS = ("#bb0000",)
 DEFAULT_PEAKSET_SYMBOLS = {
     "brush": (False, False, True, False),
@@ -191,7 +192,8 @@ def plot_signal(
         plot_widget.plot(line.x, line.y,
                          pen=pg.mkPen(
                              DEFAULT_LINE_COLORS[index % len(DEFAULT_LINE_COLORS)],
-                             width=1
+                             width=DEFAULT_LINE_WIDTH,
+                             cosmetic=True,
                          ),
                          name=f"{line.label} ch.{line.channel+1}")
     # Plot all peaks as points, with a hover tooltip
@@ -235,7 +237,6 @@ def plot_signal(
     elif x_limits is not None and max_x_range is not None and (
         fit_x_range or (prev_x_max - prev_x_min) > max_x_range
     ):
-        # Resize X range around the previous center when max_slice_points changed or max_x_range shrunk
         center = (prev_x_min + prev_x_max) / 2
         new_min = max(x_limits[0], min(center - max_x_range / 2, x_limits[1] - max_x_range))
         view_box.setXRange(new_min, min(x_limits[1], new_min + max_x_range), padding=0)
@@ -247,12 +248,12 @@ def plot_signal(
 
     update_peak_legend_labels(plot_widget)
 
-
+'''
 # Main method for testing the visualizer only
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
-    # Manually set file path
+    # Set file path
     reader = SignalReader("data/IDP_signal_example_[sami_dmitry_september2023].csv")
     signal_slice = reader.get_slice(0, 30, downsample_factor=5)
     result = AnalysisResult.line_from_slice(signal_slice)
@@ -264,4 +265,4 @@ if __name__ == "__main__":
 
     plot_signal(win, result)
 
-    sys.exit(app.exec())
+    sys.exit(app.exec())'''

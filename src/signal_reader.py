@@ -117,6 +117,5 @@ class SignalReader(QObject):
         downsampled = self._downsample(raw_slice, downsample_factor, downsample)
 
         # Create time axis based on start index and amount of points
-        # Can be used for reading samples or working with matplotlib
         time_axis = (start_idx + np.arange(len(downsampled)) * downsample_factor) / self.sample_rate
         return Slice(time_axis, downsampled)
