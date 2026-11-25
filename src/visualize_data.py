@@ -1,3 +1,4 @@
+from collections.abc import Collection, Mapping
 import sys
 import numpy as np
 
@@ -6,7 +7,9 @@ from PySide6.QtWidgets import QApplication
 import pyqtgraph as pg
 
 from signal_reader import SignalReader
-from signal_classes import AnalysisResult
+from signal_classes import AnalysisResult, PeakSet
+
+PeakKey = tuple[str, int]
 
 DEFAULT_LINE_COLORS = (
     "#ffaa00", "#00aaff", "#f34141", "#06cf17",
@@ -88,6 +91,56 @@ def set_plot_downsampling(plot_widget: pg.PlotWidget, enabled: bool):
     plot_widget.update()
 
 
+def format_peak_legend_name(
+    peak_set: PeakSet,
+    visible_count: int,
+    total_count: int,
+    is_loading: bool = False,
+) -> str:
+    """Format the legend label for a `PeakSet`."""
+    plus = "+" if is_loading else ""
+    return f"Peaks: {peak_set.label} ch.{peak_set.channel + 1} ({visible_count}/{total_count}{plus})"
+
+
+def update_peak_legend_labels(
+    plot_widget: pg.PlotWidget,
+    peak_totals: Mapping[PeakKey, int] | None = None,
+    loading_keys: Collection[PeakKey] | None = None,
+):
+    """Refresh peak legend labels on `plot_widget` for the current X view range."""
+    if peak_totals is not None:
+        plot_widget._peak_totals = dict(peak_totals)
+    if loading_keys is not None:
+        plot_widget._peak_loading_keys = set(loading_keys)
+
+    entries = getattr(plot_widget, "_peak_legend_entries", ())
+    plot_item = plot_widget.getPlotItem()
+    legend = plot_item.legend
+    if not entries or legend is None:
+        return
+
+    x_min, x_max = plot_item.getViewBox().viewRange()[0]
+    low, high = (x_min, x_max) if x_min <= x_max else (x_max, x_min)
+    totals = getattr(plot_widget, "_peak_totals", None)
+    loading = getattr(plot_widget, "_peak_loading_keys", set())
+
+    for item, peak_set in entries:
+        key = (peak_set.label, peak_set.channel)
+        visible_count = int(np.count_nonzero((peak_set.x >= low) & (peak_set.x <= high)))
+        slice_count = len(peak_set.x)
+        if totals is None:
+            total_count = slice_count
+        else:
+            total_count = max(totals.get(key, 0), slice_count)
+        is_loading = key in loading
+        label_item = legend.getLabel(item)
+        if label_item is not None:
+            label_item.setText(format_peak_legend_name(peak_set, visible_count, total_count, is_loading))
+
+    if hasattr(legend, "updateSize"):
+        legend.updateSize()
+
+
 def plot_signal(
     plot_widget: pg.PlotWidget,
     result: AnalysisResult,
@@ -97,11 +150,19 @@ def plot_signal(
     reset_y_range: bool = True,
     remove_invisible_points: bool = True,
     fit_x_range: bool = False,
+    peak_totals: Mapping[PeakKey, int] | None = None,
+    loading_peak_keys: Collection[PeakKey] | None = None,
 ):
     """Populate `plot_widget` with the lines and peak sets from `result`."""
+    plot_widget._peak_legend_entries = ()
     plot_widget.clear()
     plot_item = plot_widget.getPlotItem()
     view_box = plot_item.getViewBox()
+    if not getattr(plot_widget, "_peak_legend_connected", False):
+        view_box.sigXRangeChanged.connect(
+            lambda _vb, _rng, pw=plot_widget: update_peak_legend_labels(pw)
+        )
+        plot_widget._peak_legend_connected = True
     prev_x_min, prev_x_max = view_box.viewRange()[0]
 
     # Update the zoom/pan limits (use full file bounds when loading in slices)
@@ -133,7 +194,8 @@ def plot_signal(
                              width=1
                          ),
                          name=f"{line.label} ch.{line.channel+1}")
-     # Plot all peaks as points, with a hover tooltip
+    # Plot all peaks as points, with a hover tooltip
+    peak_entries = []
     for index, peak_set in enumerate(result.peak_sets):
         symbol_idx = index % len(DEFAULT_PEAKSET_SYMBOLS["symbol"])
         item = plot_widget.plot(peak_set.x, peak_set.y,
@@ -150,10 +212,15 @@ def plot_signal(
                                     else pg.mkPen(None)
                                 ),
                                 symbolSize=9,
-                                name=f"Peaks: {peak_set.label} ch.{peak_set.channel+1} ({len(peak_set.x)})")
+                                name=format_peak_legend_name(peak_set, 0, len(peak_set.x)))
         item.scatter.opts["hoverable"] = True
         item.scatter.opts["hoverSize"] = 13
         item.scatter.opts["tip"] = make_peak_tip(peak_set)
+        peak_entries.append((item, peak_set))
+
+    plot_widget._peak_legend_entries = tuple(peak_entries)
+    plot_widget._peak_totals = dict(peak_totals) if peak_totals is not None else None
+    plot_widget._peak_loading_keys = set(loading_peak_keys) if loading_peak_keys is not None else set()
 
     if reset_x_range:
         # Fit initial X range (showing up to max_x_range so extra slice data is buffered off-screen)
@@ -177,6 +244,8 @@ def plot_signal(
         view_box.enableAutoRange(axis=pg.ViewBox.YAxis)
         view_box.updateAutoRange()
         view_box.disableAutoRange(axis=pg.ViewBox.YAxis)
+
+    update_peak_legend_labels(plot_widget)
 
 
 # Main method for testing the visualizer only

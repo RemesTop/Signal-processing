@@ -5,15 +5,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QComboBox,
-    QPushButton, QFileDialog, QMenuBar, QMessageBox
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+    QComboBox, QPushButton, QToolButton, QFileDialog, QMenuBar, QMessageBox
 )
-from PySide6.QtCore import QSettings, QThreadPool, QTimer
+from PySide6.QtCore import Qt, QSettings, QThreadPool, QTimer, Signal
 import numpy as np
 import pyqtgraph as pg
 from signal_reader import SignalReader, convert_csv_files
 from worker import Worker
-from visualize_data import TimeAxisItem, plot_signal, set_plot_downsampling
+from visualize_data import (
+    PeakKey, TimeAxisItem, plot_signal, set_plot_downsampling, update_peak_legend_labels
+)
 from signal_classes import AnalysisResult, Line, PeakSet, Slice
 from functions_parameters_dialog import FunctionsParametersDialog
 from peak_finder import ANALYSIS_FUNCTIONS, AnalysisFunction
@@ -22,6 +24,8 @@ from peak_finder import ANALYSIS_FUNCTIONS, AnalysisFunction
 # Main app window for the project
 class SignalApp(QWidget):
     """Main app window."""
+
+    _peak_count_progress = Signal(int, object, bool)
     
     # Analysis function selected by default if there are no saved selections
     DEFAULT_ANALYSIS = ANALYSIS_FUNCTIONS["Raw signal with peaks"]
@@ -31,6 +35,8 @@ class SignalApp(QWidget):
     PREFETCH_MARGIN_RATIO = 0.2
     # Extend each analyzed slice on both sides to avoid boundary artifacts, then trim back
     SLICE_OVERLAP_SECONDS = 1.0
+    # Step size in seconds for the quick jump arrow buttons (10 minutes)
+    JUMP_STEP_SECONDS = 600.0
     
     def __init__(self):
         super().__init__()
@@ -90,6 +96,40 @@ class SignalApp(QWidget):
         self.btn = QPushButton("Run")
         self.btn.clicked.connect(self.visualize)
 
+        # 4. Graph jump navigation controls (hidden until a graph is displayed)
+        self.jump_controls = QWidget()
+        jump_layout = QHBoxLayout(self.jump_controls)
+        jump_layout.setContentsMargins(0, 0, 0, 0)
+        jump_layout.setSpacing(4)
+
+        self.jump_label = QLabel("Jump to:")
+        self.jump_input = QLineEdit()
+        self.jump_input.setPlaceholderText("0:00")
+        self.jump_input.setFixedWidth(75)
+        self.jump_input.setToolTip("Enter target time (m:ss, h:mm:ss, or seconds) and press Enter")
+        self.jump_input.returnPressed.connect(self._on_jump_entered)
+
+        self.jump_back_btn = QToolButton()
+        self.jump_back_btn.setArrowType(Qt.ArrowType.LeftArrow)
+        self.jump_back_btn.setToolTip("Jump 10 minutes backward")
+        self.jump_back_btn.setAccessibleName("Jump 10 minutes backward")
+        self.jump_back_btn.clicked.connect(lambda: self.jump_by(-self.JUMP_STEP_SECONDS))
+
+        self.jump_forward_btn = QToolButton()
+        self.jump_forward_btn.setArrowType(Qt.ArrowType.RightArrow)
+        self.jump_forward_btn.setToolTip("Jump 10 minutes forward")
+        self.jump_forward_btn.setAccessibleName("Jump 10 minutes forward")
+        self.jump_forward_btn.clicked.connect(lambda: self.jump_by(self.JUMP_STEP_SECONDS))
+
+        jump_layout.addWidget(self.jump_label)
+        jump_layout.addWidget(self.jump_input)
+        jump_layout.addWidget(self.jump_back_btn)
+        jump_layout.addWidget(self.jump_forward_btn)
+        jump_size_policy = self.jump_controls.sizePolicy()
+        jump_size_policy.setRetainSizeWhenHidden(True)
+        self.jump_controls.setSizePolicy(jump_size_policy)
+        self.jump_controls.setVisible(False)
+
         # Plot widget
         self.plot_widget = pg.PlotWidget(axisItems={"bottom": TimeAxisItem(orientation="bottom")})
         self.plot_widget.showGrid(x=True, y=True)
@@ -102,11 +142,14 @@ class SignalApp(QWidget):
         self._analysis_request_id = 0
         self._analysis_running = False
         self._analysis_worker = None
-        self.total_peak_count: int | None = None
-        self.counted_peaks_so_far = 0
+        self.total_peak_counts: dict[PeakKey, int] = {}
+        self.peak_counts_so_far: dict[PeakKey, int] = {}
+        self.peaks_counting = False
+        self._peak_count_completed = False
         self._peak_count_request_id = 1
         self._peak_count_started_id = 0
         self._peak_count_worker = None
+        self._peak_count_progress.connect(self._on_total_peak_count_progress)
         self.pan_timer = QTimer(self)
         self.pan_timer.setSingleShot(True)
         self.pan_timer.setInterval(50)
@@ -118,10 +161,12 @@ class SignalApp(QWidget):
 
         # Layout
         top_layout = QHBoxLayout()
-        top_layout.addWidget(self.file_input)
+        top_layout.addWidget(self.file_input, 1)
         top_layout.addWidget(self.browse_btn)
         top_layout.addWidget(self.channel_combo)
         top_layout.addWidget(self.btn)
+        top_layout.addSpacing(12)
+        top_layout.addWidget(self.jump_controls)
 
         layout = QVBoxLayout(self)
         layout.setMenuBar(self.menu_bar)
@@ -131,20 +176,20 @@ class SignalApp(QWidget):
         # Restore saved settings on startup
         self.load_settings()
 
-    def _on_x_range_changed(self, _view_box: pg.ViewBox, x_range):
-        """Schedule a slice prefetch before the user reaches the edge of the loaded range."""
+    def _slice_reload_needed(self, x_range) -> bool:
+        """Return whether the given visible X range requires loading a new slice."""
         if (
             not hasattr(self, "reader")
             or self.reader is None
             or self.reader.data is None
             or self.loaded_range is None
         ):
-            return
+            return False
 
         total_duration = self.reader.total_samples / self.reader.sample_rate
         loaded_window_sec = self.visible_slice_seconds * 2.0
         if total_duration <= loaded_window_sec + 1e-9:
-            return
+            return False
 
         window_sec = min(total_duration, loaded_window_sec)
         margin = window_sec * self.PREFETCH_MARGIN_RATIO
@@ -152,11 +197,98 @@ class SignalApp(QWidget):
         view_max = min(total_duration, x_range[1])
         loaded_start, loaded_end = self.loaded_range
 
-        # Prefetch early while buffered data is still ahead so the graph stays connected
         need_left = loaded_start > 1e-3 and view_min < loaded_start + margin
         need_right = loaded_end < total_duration - 1e-3 and view_max > loaded_end - margin
-        if (need_left or need_right) and not self.pan_timer.isActive():
+        return need_left or need_right
+
+    def _on_x_range_changed(self, _view_box: pg.ViewBox, x_range):
+        """Schedule a slice prefetch before the user reaches the edge of the loaded range."""
+        if self._slice_reload_needed(x_range) and not self.pan_timer.isActive():
             self.pan_timer.start()
+
+    @staticmethod
+    def _parse_jump_time(text: str) -> float:
+        """Parse a time string (`m:ss`, `h:mm:ss`, or seconds) into seconds."""
+        s = text.strip()
+        if not s:
+            raise ValueError("Enter a time! (eg. 5:00)")
+        if s.endswith("s"):
+            s = s[:-1].strip()
+        if ":" in s:
+            parts = s.split(":")
+            if len(parts) == 2:
+                m_str, sec_str = parts
+                minutes = int(m_str)
+                secs = float(sec_str)
+                if minutes < 0 or not (0.0 <= secs < 60.0):
+                    raise ValueError(f"Invalid time '{text.strip()}'.")
+                return minutes * 60.0 + secs
+            if len(parts) == 3:
+                h_str, m_str, sec_str = parts
+                hours = int(h_str)
+                minutes = int(m_str)
+                secs = float(sec_str)
+                if hours < 0 or not (0 <= minutes < 60) or not (0.0 <= secs < 60.0):
+                    raise ValueError(f"Invalid time '{text.strip()}'.")
+                return hours * 3600.0 + minutes * 60.0 + secs
+            raise ValueError(f"Invalid time '{text.strip()}'.")
+        seconds = float(s)
+        if not np.isfinite(seconds) or seconds < 0:
+            raise ValueError(f"Invalid time '{text.strip()}'.")
+        return seconds
+
+    def _has_loaded_signal(self) -> bool:
+        """Return whether a signal reader is currently loaded with data."""
+        return (
+            hasattr(self, "reader")
+            and self.reader is not None
+            and self.reader.data is not None
+        )
+
+    def _apply_view_x_range(self, new_x_min: float, new_x_max: float):
+        """Move the X view range immediately and reload the slice if needed."""
+        self.plot_widget.getViewBox().setXRange(new_x_min, new_x_max, padding=0)
+        self.pan_timer.stop()
+        if self._slice_reload_needed((new_x_min, new_x_max)):
+            self._reload_visible_slice(force=True)
+
+    def _on_jump_entered(self):
+        """Jump to the timestamp entered in the jump input field."""
+        if not self._has_loaded_signal():
+            return
+        try:
+            target_sec = self._parse_jump_time(self.jump_input.text())
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid jump time", str(exc))
+            return
+        self.jump_to(target_sec)
+
+    def jump_to(self, target_sec: float):
+        """Center the visible graph window around `target_sec` immediately."""
+        if not self._has_loaded_signal():
+            return
+        total_duration = self.reader.total_samples / self.reader.sample_rate
+        if total_duration <= 0:
+            return
+        clamped_target = max(0.0, min(float(target_sec), total_duration))
+        x_min, x_max = self.plot_widget.getViewBox().viewRange()[0]
+        span = min(total_duration, max(1e-6, x_max - x_min))
+        new_x_min = max(0.0, min(clamped_target - span / 2.0, total_duration - span))
+        self._apply_view_x_range(new_x_min, new_x_min + span)
+
+    def jump_by(self, delta_sec: float):
+        """Shift the visible graph window by `delta_sec` seconds immediately."""
+        if not self._has_loaded_signal():
+            return
+        total_duration = self.reader.total_samples / self.reader.sample_rate
+        if total_duration <= 0:
+            return
+        x_min, x_max = self.plot_widget.getViewBox().viewRange()[0]
+        span = min(total_duration, max(1e-6, x_max - x_min))
+        new_x_min = max(0.0, min(x_min + delta_sec, total_duration - span))
+        if abs(new_x_min - x_min) < 1e-9:
+            return
+        self._apply_view_x_range(new_x_min, new_x_min + span)
 
     def _reload_visible_slice(
         self,
@@ -376,22 +508,46 @@ class SignalApp(QWidget):
         return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
 
     def _update_plot_title(self):
-        """Update the plot title with total file duration, total peaks, and active functions."""
+        """Update the plot title with total file duration and peak counting / active functions."""
         total_duration = self.reader.total_samples / self.reader.sample_rate
         duration_str = self._format_duration(total_duration)
-        if self.total_peak_count is not None:
-            peaks_str = str(self.total_peak_count)
+        if self.peaks_counting:
+            self.plot_widget.setTitle(f"File duration: {duration_str}, Counting peaks..")
         else:
-            peaks_str = f"{self.counted_peaks_so_far}..."
-        analysis_names = ", ".join(analysis.title for analysis in self.active_analyses)
-        self.plot_widget.setTitle(
-            f"File duration: {duration_str}, Peaks: {peaks_str}, Functions: {analysis_names}"
+            analysis_names = ", ".join(analysis.title for analysis in self.active_analyses)
+            self.plot_widget.setTitle(
+                f"File duration: {duration_str}, Functions: {analysis_names}"
+            )
+
+    def _displayed_peak_totals(self) -> dict[PeakKey, int]:
+        """Return current per-function/channel peak totals (live or finalized)."""
+        return dict(self.peak_counts_so_far) | dict(self.total_peak_counts)
+
+    def _current_loading_peak_keys(self, peak_sets=()) -> set[PeakKey]:
+        """Return `(label, channel)` keys whose whole-file peak counts are still loading."""
+        if not self.peaks_counting:
+            return set()
+        known_keys = set(self.peak_counts_so_far.keys()) | {
+            (ps.label, ps.channel) for ps in peak_sets
+        }
+        return {key for key in known_keys if key not in self.total_peak_counts}
+
+    def _refresh_peak_legend_labels(self):
+        """Push latest peak totals and loading flags to the plot legend."""
+        entries = getattr(self.plot_widget, "_peak_legend_entries", ())
+        peak_sets = [ps for _, ps in entries]
+        update_peak_legend_labels(
+            self.plot_widget,
+            peak_totals=self._displayed_peak_totals(),
+            loading_keys=self._current_loading_peak_keys(peak_sets),
         )
 
     def _invalidate_total_peak_count(self):
-        """Reset cached whole-file peak count and cancel any in-flight counting worker."""
-        self.total_peak_count = None
-        self.counted_peaks_so_far = 0
+        """Reset cached whole-file peak counts and cancel any in-flight counting worker."""
+        self.total_peak_counts.clear()
+        self.peak_counts_so_far.clear()
+        self.peaks_counting = False
+        self._peak_count_completed = False
         self._peak_count_request_id += 1
 
     def _analyze_slice(
@@ -440,46 +596,70 @@ class SignalApp(QWidget):
         return AnalysisResult(trimmed_slice, lines=trimmed_lines, peak_sets=trimmed_peaks)
 
     def _count_total_peaks(
-        self, count_id, reader, start_from_sec, initial_count,
-        channel_choice, analyses, parameters, chunk_sec, progress_callback=None,
+        self, count_id, reader, start_from_sec, initial_counts,
+        channel_choice, analyses, parameters, chunk_sec,
     ):
-        """Count total peaks across the entire file in bounded chunks."""
+        """Count total peaks per function across the entire file in bounded chunks."""
         total_duration = reader.total_samples / reader.sample_rate
         channel_indices = self._channel_indices_for(channel_choice)
-        total_peaks = initial_count
-        t = start_from_sec
+        all_counts: dict[PeakKey, int] = dict(initial_counts)
 
-        while t < total_duration - 1e-9:
+        for analysis in analyses:
             if count_id != self._peak_count_request_id:
                 return count_id, None
-            end = min(total_duration, t + chunk_sec)
-            result = self._analyze_slice(reader, t, end, channel_indices, analyses, parameters)
-            total_peaks += sum(len(peak_set.x) for peak_set in result.peak_sets)
-            if progress_callback:
-                progress_callback.emit(float(total_peaks))
-            t = end
+            analysis_counts: dict[PeakKey, int] = {}
+            t = start_from_sec
+            while t < total_duration - 1e-9:
+                if count_id != self._peak_count_request_id:
+                    return count_id, None
+                end = min(total_duration, t + chunk_sec)
+                result = self._analyze_slice(reader, t, end, channel_indices, (analysis,), parameters)
+                for peak_set in result.peak_sets:
+                    key = (peak_set.label, peak_set.channel)
+                    if key not in analysis_counts:
+                        analysis_counts[key] = initial_counts.get(key, 0)
+                    analysis_counts[key] += len(peak_set.x)
+                if analysis_counts:
+                    self._peak_count_progress.emit(count_id, dict(analysis_counts), False)
+                t = end
 
-        return count_id, total_peaks
+            all_counts.update(analysis_counts)
+            if analysis_counts:
+                self._peak_count_progress.emit(count_id, dict(analysis_counts), True)
 
-    def _on_total_peak_count_progress(self, count_id: int, peaks_so_far: float):
-        """Update the live peak count in the title as chunks finish."""
-        if count_id != self._peak_count_request_id or self.total_peak_count is not None:
+        return count_id, all_counts
+
+    def _on_total_peak_count_progress(self, count_id: int, counts: dict, analysis_finished: bool):
+        """Update live per-function peak counts in the graph legend as chunks/functions finish."""
+        if count_id != self._peak_count_request_id or self._peak_count_completed:
             return
-        self.counted_peaks_so_far = max(self.counted_peaks_so_far, int(peaks_so_far))
-        self._update_plot_title()
+        for key, val in counts.items():
+            self.peak_counts_so_far[key] = max(self.peak_counts_so_far.get(key, 0), int(val))
+            if analysis_finished:
+                self.total_peak_counts[key] = int(val)
+        self._refresh_peak_legend_labels()
 
     def _on_total_peak_count_finished(self, payload):
-        """Update the title once whole-file peak counting completes."""
-        count_id, total_peaks = payload
-        if count_id != self._peak_count_request_id or total_peaks is None:
+        """Finalize whole-file peak counts and show active functions in the plot title."""
+        count_id, total_counts = payload
+        if count_id != self._peak_count_request_id or total_counts is None:
             return
-        self.total_peak_count = total_peaks
+        for key, val in total_counts.items():
+            self.total_peak_counts[key] = int(val)
+            self.peak_counts_so_far[key] = int(val)
+        self.peaks_counting = False
+        self._peak_count_completed = True
         self._peak_count_worker = None
         self._update_plot_title()
+        self._refresh_peak_legend_labels()
 
     def _on_total_peak_count_error(self, _err):
         """Clear counting state if background peak counting fails."""
+        self.peaks_counting = False
         self._peak_count_worker = None
+        if self._has_loaded_signal():
+            self._update_plot_title()
+            self._refresh_peak_legend_labels()
 
     def _run_analysis(
         self, request_id, start_sec, end_sec, reset_x_range, reset_y_range,
@@ -544,39 +724,44 @@ class SignalApp(QWidget):
         self._analysis_worker = None
         self.loaded_range = loaded_range
 
-        slice_peak_count = sum(len(peak_set.x) for peak_set in result.peak_sets)
+        slice_counts = {(ps.label, ps.channel): len(ps.x) for ps in result.peak_sets}
         total_duration = self.reader.total_samples / self.reader.sample_rate
         visible_sec = float(self.visible_slice_seconds)
         loaded_window_sec = visible_sec * 2.0
+        count_worker = None
 
         if total_duration <= loaded_window_sec + 1e-9:
-            self.total_peak_count = slice_peak_count
+            self.total_peak_counts = dict(slice_counts)
+            self.peak_counts_so_far = dict(slice_counts)
+            self.peaks_counting = False
+            self._peak_count_completed = True
         else:
-            # Show already-detected peaks immediately while background counting finishes
-            self.counted_peaks_so_far = max(self.counted_peaks_so_far, slice_peak_count)
-            if self.total_peak_count is None and self._peak_count_started_id != self._peak_count_request_id:
-                count_id = self._peak_count_request_id
-                self._peak_count_started_id = count_id
-                start_from = loaded_range[1] if loaded_range[0] <= 1e-9 else 0.0
-                initial_count = slice_peak_count if loaded_range[0] <= 1e-9 else 0
-                count_worker = Worker(
-                    self._count_total_peaks,
-                    count_id,
-                    self.reader,
-                    start_from,
-                    initial_count,
-                    self.channel_combo.currentText(),
-                    self.active_analyses,
-                    {k: dict(v) for k, v in self.analysis_parameters.items()},
-                    loaded_window_sec,
-                )
-                count_worker.signals.progress.connect(
-                    lambda val, cid=count_id: self._on_total_peak_count_progress(cid, val)
-                )
-                count_worker.signals.result.connect(self._on_total_peak_count_finished)
-                count_worker.signals.error.connect(self._on_total_peak_count_error)
-                self._peak_count_worker = count_worker
-                QThreadPool.globalInstance().start(count_worker)
+            for key, count in slice_counts.items():
+                self.peak_counts_so_far[key] = max(self.peak_counts_so_far.get(key, 0), count)
+            if not self._peak_count_completed and self._peak_count_started_id != self._peak_count_request_id:
+                if not self.active_analyses:
+                    self.peaks_counting = False
+                    self._peak_count_completed = True
+                else:
+                    count_id = self._peak_count_request_id
+                    self._peak_count_started_id = count_id
+                    self.peaks_counting = True
+                    start_from = loaded_range[1] if loaded_range[0] <= 1e-9 else 0.0
+                    initial_counts = dict(slice_counts) if loaded_range[0] <= 1e-9 else {}
+                    count_worker = Worker(
+                        self._count_total_peaks,
+                        count_id,
+                        self.reader,
+                        start_from,
+                        initial_counts,
+                        self.channel_combo.currentText(),
+                        self.active_analyses,
+                        {k: dict(v) for k, v in self.analysis_parameters.items()},
+                        loaded_window_sec,
+                    )
+                    count_worker.signals.result.connect(self._on_total_peak_count_finished)
+                    count_worker.signals.error.connect(self._on_total_peak_count_error)
+                    self._peak_count_worker = count_worker
 
         self._update_plot_title()
         # Show the parameter editing dialog on initial load
@@ -595,7 +780,12 @@ class SignalApp(QWidget):
             reset_y_range=reset_y_range,
             remove_invisible_points=self.remove_invisible_points,
             fit_x_range=fit_x_range,
+            peak_totals=self._displayed_peak_totals(),
+            loading_peak_keys=self._current_loading_peak_keys(result.peak_sets),
         )
+        if count_worker is not None:
+            QThreadPool.globalInstance().start(count_worker)
+        self.jump_controls.setVisible(True)
         self.btn.setEnabled(True)
 
         # Re-check in case the user panned further while the worker was running
