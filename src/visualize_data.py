@@ -159,6 +159,8 @@ def plot_signal(
         # Fit initial X range (showing up to max_x_range so extra slice data is buffered off-screen)
         if x_limits is not None and max_x_range is not None:
             view_box.setXRange(x_limits[0], min(x_limits[1], x_limits[0] + max_x_range), padding=0)
+        elif time.size:
+            view_box.setXRange(float(time.min()), float(time.max()), padding=0)
         else:
             view_box.enableAutoRange(axis=pg.ViewBox.XAxis)
             view_box.updateAutoRange()

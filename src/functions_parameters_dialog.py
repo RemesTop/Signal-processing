@@ -2,11 +2,11 @@ import ast
 from collections.abc import Mapping, Sequence
 
 from PySide6.QtCore import Qt, Signal, QSize
-from PySide6.QtGui import QValidator
+from PySide6.QtGui import QFont, QValidator
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-    QFrame, QMessageBox, QPushButton, QScrollArea, QSpinBox, QToolButton,
-    QVBoxLayout, QWidget
+    QApplication, QCheckBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout,
+    QLabel, QLineEdit, QFrame, QMessageBox, QPushButton, QScrollArea,
+    QSpinBox, QToolButton, QVBoxLayout, QWidget
 )
 
 from peak_finder import AnalysisFunction
@@ -103,18 +103,18 @@ class FunctionsParametersDialog(QDialog):
             checkbox.setToolTip(analysis.function.__doc__) # Show the docstring as the tooltip
 
             # Separate label so the text can be wrapped
-            label = _CheckboxLabel(analysis.title)
-            label.setWordWrap(True)
-            label.setBuddy(checkbox)
-            label.setToolTip(analysis.function.__doc__)
-            label.clicked.connect(checkbox.click)
+            comment_label = _CheckboxLabel(analysis.title)
+            comment_label.setWordWrap(True)
+            comment_label.setBuddy(checkbox)
+            comment_label.setToolTip(analysis.function.__doc__)
+            comment_label.clicked.connect(checkbox.click)
             checkbox.setAccessibleName(analysis.title)
 
             checkbox_row = QWidget()
             checkbox_row_layout = QHBoxLayout(checkbox_row)
             checkbox_row_layout.setContentsMargins(0, 0, 0, 0)
             checkbox_row_layout.addWidget(checkbox, 0, Qt.AlignmentFlag.AlignTop)
-            checkbox_row_layout.addWidget(label, 1)
+            checkbox_row_layout.addWidget(comment_label, 1)
 
             self.checkboxes[analysis.key] = checkbox
             funcs_layout.addWidget(checkbox_row)
@@ -200,10 +200,25 @@ class FunctionsParametersDialog(QDialog):
             
             # A QLineEdit for each parameter
             for parameter in analysis.parameters:
+                label = QLabel(parameter.label or parameter.name)
+                label.setFixedWidth(150)
+                label.setWordWrap(True)
                 field = QLineEdit("None" if parameter.default is None else str(parameter.default))
                 field.setToolTip("Enter a number, None, or a tuple for a range-valued parameter")
                 self.fields[analysis.key][parameter.name] = field
-                form.addRow(parameter.label or parameter.name, field)
+                form.addRow(label, field)
+                
+                # Additional information label
+                comment_label = QLabel(
+                    f"Default: {parameter.default}" +
+                    (f"\n{parameter.comment}" if parameter.comment else ""),
+                    wordWrap=True,
+                    margin=0,
+                    indent=20
+                )
+                comment_label.setFont(QFont(QApplication.font().family(), 8))
+                comment_label.setStyleSheet("QLabel { color: gray }")
+                form.addRow(comment_label)
 
             section.setVisible(analysis.key in selected_keys)
             params_layout.addWidget(section)

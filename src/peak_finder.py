@@ -28,11 +28,12 @@ class AnalysisParameter:
     editable in the GUI.
     
     Defines the name and default value of the variable, and the label
-    that's shown to the user.
+    and comment that are shown to the user. The label defaults to `name`.
     """
     name: str
     default: object
     label: str | None = None
+    comment: str | None = None
 
 
 @dataclass(frozen=True)
@@ -179,14 +180,18 @@ def remove_baseline_morphological(
 # --------- scipy.signal.find_peaks ---------
 
 FIND_PEAKS_PARAMETERS = (
-    AnalysisParameter("height", None),
-    AnalysisParameter("threshold", None),
-    AnalysisParameter("distance", None),
-    AnalysisParameter("prominence", None),
-    AnalysisParameter("width", None),
-    AnalysisParameter("wlen", None),
-    AnalysisParameter("rel_height", 0.5),
-    AnalysisParameter("plateau_size", None),
+    AnalysisParameter("height", None, "Peak height"),
+    AnalysisParameter("threshold", None, "Peak threshold", "Vertical distance to neighboring samples."),
+    AnalysisParameter("distance", None, "Peak distance",
+                      "If None: (0.005 * s.sample_rate) / decimation_factor"
+                      "\nHorizontal distance between peaks."),
+    AnalysisParameter("prominence", 40, "Peak prominence"),
+    AnalysisParameter("width", (None, None), "Peak width"),
+    AnalysisParameter("wlen", None, "Peak wlen",
+                      "Window length for prominences. Low value speeds up calculation."),
+    AnalysisParameter("rel_height", 0.5, "Peak rel. height",
+                      "Relative height of a peak where the width is calculated (0-1)."),
+    AnalysisParameter("plateau_size", None, "Peak plateau size", "Size of the flat top of peaks."),
 )
 """All adjustable parameters of `scipy.signal.find_peaks` for GUI editing."""
 
@@ -198,6 +203,7 @@ def _find_peaks_parameters(**modified_defaults: object) -> tuple[AnalysisParamet
             parameter.name,
             modified_defaults.get(parameter.name, parameter.default),
             parameter.label,
+            parameter.comment
         )
         for parameter in FIND_PEAKS_PARAMETERS
     )
@@ -254,10 +260,7 @@ def example_analysis(s: Slice, out: AnalysisResult):
 
 @analysis_function(
     "Raw signal with peaks",
-    (
-        *_find_peaks_parameters(
-            prominence=40),
-    ),
+    FIND_PEAKS_PARAMETERS,
 )
 def raw_signal_with_peaks(s: Slice, out: AnalysisResult,
                           **peak_options):
@@ -273,7 +276,6 @@ def raw_signal_with_peaks(s: Slice, out: AnalysisResult,
     # This value is used if the corresponding parameter is set to "None" in the parameter dialog, and this value
     # isn't communicated to the user in any way.
     peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate)))
-    peak_options.setdefault("prominence", 40)
 
     # Filter and detect peaks only for requested channel(s) to optimize performance
     for ch in s.channel_indices:
@@ -289,9 +291,8 @@ def raw_signal_with_peaks(s: Slice, out: AnalysisResult,
 @analysis_function(
     "SciPy decimation",
     (
-        AnalysisParameter("decimation_factor", 10),
-        *_find_peaks_parameters(
-            prominence=40)
+        AnalysisParameter("decimation_factor", 10, "Decimation factor"),
+        *FIND_PEAKS_PARAMETERS
     ),
 )
 def scipy_decimation(s: Slice, out: AnalysisResult,
@@ -306,7 +307,6 @@ def scipy_decimation(s: Slice, out: AnalysisResult,
     `scipy.signal.find_peaks` with a 5 ms minimum peak distance and 40 prominence.
     """
     peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate) / decimation_factor))
-    peak_options.setdefault("prominence", 40)
     
     # Filter and detect peaks only for requested channel(s) to optimize performance
     for ch in s.channel_indices:
@@ -325,9 +325,8 @@ def scipy_decimation(s: Slice, out: AnalysisResult,
 @analysis_function(
     "Custom decimation",
     (
-        AnalysisParameter("decimation_factor", 10),
-        *_find_peaks_parameters(
-            prominence=40)
+        AnalysisParameter("decimation_factor", 10, "Decimation factor"),
+        *FIND_PEAKS_PARAMETERS
     ),
 )
 def custom_decimation(s: Slice, out: AnalysisResult,
@@ -343,7 +342,6 @@ def custom_decimation(s: Slice, out: AnalysisResult,
     `scipy.signal.find_peaks` with a 5 ms minimum peak distance and 40 prominence.
     """
     peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate) / decimation_factor))
-    peak_options.setdefault("prominence", 40)
     
     # Filter and detect peaks only for requested channel(s) to optimize performance
     for ch in s.channel_indices:
@@ -368,10 +366,9 @@ def custom_decimation(s: Slice, out: AnalysisResult,
 @analysis_function(
     "Extra low-pass",
     (
-        AnalysisParameter("decimation_factor", 10),
-        AnalysisParameter("lowpass_cutoff", 250),
-        *_find_peaks_parameters(
-            prominence=40)
+        AnalysisParameter("decimation_factor", 10, "Decimation factor"),
+        AnalysisParameter("lowpass_cutoff", 250, "Low-pass cutoff (Hz)", "Frequencies above this are attenuated."),
+        *FIND_PEAKS_PARAMETERS
     ),
 )
 def extra_lowpass(s: Slice, out: AnalysisResult,
@@ -388,7 +385,6 @@ def extra_lowpass(s: Slice, out: AnalysisResult,
     `scipy.signal.find_peaks` with a 5 ms minimum peak distance and 40 prominence.
     """
     peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate) / decimation_factor))
-    peak_options.setdefault("prominence", 40)
     
     # Filter and detect peaks only for requested channel(s) to optimize performance
     for ch in s.channel_indices:
@@ -419,17 +415,16 @@ def extra_lowpass(s: Slice, out: AnalysisResult,
 @analysis_function(
     "Band-pass filter",
     (
-        AnalysisParameter("decimation_factor", 10),
-        AnalysisParameter("low_cutoff", 10, "Low cutoff (Hz)"),
-        AnalysisParameter("high_cutoff", 1000, "High cutoff (Hz)"),
-        *_find_peaks_parameters(
-            prominence=40)
+        AnalysisParameter("decimation_factor", 10, "Decimation factor"),
+        AnalysisParameter("low_cutoff", 10, "Lower cutoff (Hz)", "Frequencies below this are attenuated."),
+        AnalysisParameter("high_cutoff", 250, "Upper cutoff (Hz)", "Frequencies above this are attenuated."),
+        *FIND_PEAKS_PARAMETERS
     ),
 )
 def band_pass_filter(s: Slice, out: AnalysisResult,
                      decimation_factor: int = 10,
                      low_cutoff: float = 10,
-                     high_cutoff: float = 1000,
+                     high_cutoff: float = 250,
                      **peak_options):
     """Anti-alias, downsample, band-pass filter, and detect peaks.
 
@@ -442,7 +437,6 @@ def band_pass_filter(s: Slice, out: AnalysisResult,
     `scipy.signal.find_peaks` with a 5 ms minimum peak distance and 40 prominence.
     """
     peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate) / decimation_factor))
-    peak_options.setdefault("prominence", 40)
 
     for ch in s.channel_indices:
         x = s.data[:, ch]
@@ -474,12 +468,15 @@ def band_pass_filter(s: Slice, out: AnalysisResult,
 @analysis_function(
     "Baseline correction",
     (
-        AnalysisParameter("decimation_factor", 10),
-        AnalysisParameter("block_size", 10),
-        AnalysisParameter("baseline_window", 600),
-        AnalysisParameter("bias", None),
-        *_find_peaks_parameters(
-            prominence=40)
+        AnalysisParameter("decimation_factor", 10, "Decimation factor"),
+        AnalysisParameter("block_size", 10, "Block size",
+                          "Size of the blocks whose medians are used for baseline correction, in samples."),
+        AnalysisParameter("baseline_window", 600, "Window size",
+                          "If None: (3 * 2000) // decimation_factor"
+                          "\nSize of the morphological opening in baseline correction, in samples."),
+        AnalysisParameter("bias", None, "Bias",
+                          "Constant bias to subtract from the signal.\nIf None, estimated as the median residual."),
+        *FIND_PEAKS_PARAMETERS
     ),
 )
 def baseline_correction(s: Slice, out: AnalysisResult,
@@ -499,7 +496,6 @@ def baseline_correction(s: Slice, out: AnalysisResult,
     `scipy.signal.find_peaks` with a 5 ms minimum peak distance and 40 prominence.
     """
     peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate) / decimation_factor))
-    peak_options.setdefault("prominence", 40)
     
     if baseline_window is None:
         baseline_window = 6_000 // decimation_factor
@@ -537,10 +533,11 @@ def baseline_correction(s: Slice, out: AnalysisResult,
 @analysis_function(
     "Baseline correction pybaselines",
     (
-        AnalysisParameter("decimation_factor", 10),
-        AnalysisParameter("half_window", 960),
-        *_find_peaks_parameters(
-            prominence=40)
+        AnalysisParameter("decimation_factor", 10, "Decimation factor"),
+        AnalysisParameter("half_window", 960, "Half-window",
+                          "Half of the window used for morphological baseline calculation, in samples."
+                          "\nIf None, it is optimized automatically, which is slow."),
+        *FIND_PEAKS_PARAMETERS
     ),
 )
 def baseline_correction_pybaselines(s: Slice, out: AnalysisResult,
@@ -562,7 +559,6 @@ def baseline_correction_pybaselines(s: Slice, out: AnalysisResult,
         return
     
     peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate) / decimation_factor))
-    peak_options.setdefault("prominence", 40)
     
     if half_window is None:
         half_window = 6_000 // decimation_factor
