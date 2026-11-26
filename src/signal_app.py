@@ -6,7 +6,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QComboBox, QPushButton, QToolButton, QFileDialog, QMenuBar, QMessageBox
+    QComboBox, QPushButton, QToolButton, QFileDialog, QMenuBar, QMessageBox,
+    QMenu, QInputDialog
 )
 from PySide6.QtCore import Qt, QSettings, QThreadPool, QTimer, Signal
 import numpy as np
@@ -61,6 +62,7 @@ class SignalApp(QWidget):
         # General slicing and display options
         self.visible_slice_seconds = self.DEFAULT_VISIBLE_SLICE_SECONDS
         self.remove_invisible_points = True
+        self._jump_after_run = False
         # Dialog for editing the parameters
         self.parameters_dialog = FunctionsParametersDialog(
             tuple(ANALYSIS_FUNCTIONS.values()),
@@ -100,9 +102,16 @@ class SignalApp(QWidget):
         self.channel_combo.currentIndexChanged.connect(self.on_channel_changed)
 
         # 3. Visualize Data button (When the button is pressed)
-        self.btn = QPushButton("Run")
+        self.btn = QToolButton()
         self.btn.setObjectName("runButton")
+        self.btn.setText("Run")
+        self.btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self.btn.clicked.connect(self.visualize)
+        self.run_menu = QMenu(self.btn)
+        self.run_from_time_action = self.run_menu.addAction("Run at time...")
+        self.run_from_time_action.triggered.connect(self.run_at_time)
+        self.btn.setMenu(self.run_menu)
 
         # 4. Graph jump navigation controls (hidden until a graph is displayed)
         self.jump_controls = QWidget()
@@ -476,6 +485,24 @@ class SignalApp(QWidget):
         if file_path:
             self.file_input.setText(file_path)
 
+    def run_at_time(self):
+        """Run the selected file, then jump to a time entered in a dialog."""
+        time_text, accepted = QInputDialog.getText(
+            self,
+            "Run at time",
+            "Go to time (m:ss, h:mm:ss, or seconds):",
+            QLineEdit.EchoMode.Normal,
+            self.jump_input.text() or "0:00",
+        )
+        if not accepted:
+            return
+
+        self.jump_input.setText(time_text)
+        if self.file_input.text().strip():
+            self._analysis_request_id += 1
+            self.visualize()
+            self._jump_after_run = True
+
     def visualize(self):
         """Read, convert and plot the selected file and save the settings."""
         self.save_settings()
@@ -801,9 +828,13 @@ class SignalApp(QWidget):
         # Re-check in case the user panned further while the worker was running
         view_box = self.plot_widget.getViewBox()
         self._on_x_range_changed(view_box, view_box.viewRange()[0])
+        if reset_x_range and self._jump_after_run:
+            self._jump_after_run = False
+            self._on_jump_entered()
 
     def _on_analysis_error(self, err):
         """Show an error message for an error in signal analysis."""
+        self._jump_after_run = False
         self._analysis_running = False
         self.plot_widget.setTitle("Peaks: unavailable.")
         QMessageBox.critical(self, "Error in signal analysis", f"{err[0].__name__}: {err[1]}")

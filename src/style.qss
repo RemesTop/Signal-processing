@@ -1,4 +1,4 @@
-QPushButton#runButton,
+QToolButton#runButton,
 QPushButton#applyButton {
     background-color: '#2563eb';
     color: white;
@@ -7,17 +7,26 @@ QPushButton#applyButton {
     padding: 3px 26px;
 }
 
-QPushButton#runButton:hover,
+QToolButton#runButton {
+    padding-right: 36px;
+}
+
+QToolButton#runButton::menu-button {
+    border-left: 1px solid '#1d4ed8';
+    width: 19px;
+}
+
+QToolButton#runButton:hover,
 QPushButton#applyButton:hover {
     background-color: '#3b82f6';
 }
 
-QPushButton#runButton:pressed,
+QToolButton#runButton:pressed,
 QPushButton#applyButton:pressed {
     background-color: '#1e40af';
 }
 
-QPushButton#runButton:disabled,
+QToolButton#runButton:disabled,
 QPushButton#applyButton:disabled {
     background-color: '#1e3a8a';
     color: '#d1d5db';
