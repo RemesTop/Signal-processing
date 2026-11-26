@@ -14,7 +14,8 @@ import pyqtgraph as pg
 from signal_reader import SignalReader, convert_csv_files
 from worker import Worker
 from visualize_data import (
-    PeakKey, TimeAxisItem, plot_signal, set_plot_downsampling, update_peak_legend_labels
+    PeakKey, TimeAxisItem, plot_signal, set_peakset_colors, set_plot_downsampling,
+    update_peak_legend_labels, update_peakset_colors,
 )
 from signal_classes import AnalysisResult, Line, PeakSet, Slice
 from functions_parameters_dialog import FunctionsParametersDialog
@@ -83,8 +84,10 @@ class SignalApp(QWidget):
         options_section.setDisabled(True)
         self.action_auto_y_range = view_menu.addAction("Auto Y range on zoom")
         self.action_auto_y_range.setCheckable(True)
-        self.action_auto_y_range.toggled.connect(self._set_plot_auto_y_range)
-        self.action_auto_y_range.toggled.connect(self.save_settings)
+        self.action_auto_y_range.toggled.connect(self._on_plot_auto_y_range_toggled)
+        self.action_multi_color_peaksets = view_menu.addAction("Use multiple colors for peak sets")
+        self.action_multi_color_peaksets.setCheckable(True)
+        self.action_multi_color_peaksets.toggled.connect(self._on_multi_color_peaksets_toggled)
         
 
         # 1. Text input for file path and browse button
@@ -345,6 +348,15 @@ class SignalApp(QWidget):
         else:
             auto_y_range = str(saved_auto_y_range).strip().lower() in ("true", "1", "yes")
         self.action_auto_y_range.setChecked(auto_y_range)
+        
+        saved_multi_color_peaksets = self.settings.value("multi_color_peak_sets", False)
+        if isinstance(saved_multi_color_peaksets, bool):
+            multi_color_peaksets = saved_multi_color_peaksets
+        else:
+            multi_color_peaksets = (
+                str(saved_multi_color_peaksets).strip().lower() not in ("false", "0", "no", "")
+            )
+        self.action_multi_color_peaksets.setChecked(multi_color_peaksets)
 
         # Selected analysis functions and their parameters
         saved_analyses = self.settings.value("analysis_functions", "")
@@ -429,6 +441,7 @@ class SignalApp(QWidget):
         self.settings.setValue("file_path", self.file_input.text())
         self.settings.setValue("channel_selection", self.channel_combo.currentText())
         self.settings.setValue("auto_y_range", self.action_auto_y_range.isChecked())
+        self.settings.setValue("multi_color_peak_sets", self.action_multi_color_peaksets.isChecked())
         self.settings.sync()
 
     def save_analysis_functions_and_parameters(self, evaluate: bool = True):
@@ -920,14 +933,23 @@ class SignalApp(QWidget):
         self.batch_conversion_worker = None
         
     
-    def _set_plot_auto_y_range(self, auto_range: bool):
-        """Toggle automatic y range fit for the plot."""
+    def _on_plot_auto_y_range_toggled(self, enabled: bool):
+        """Toggle automatic y range fit for the plot and save it."""
         view_box = self.plot_widget.getPlotItem().getViewBox()
-        view_box.setAutoVisible(y=auto_range)
-        if auto_range:
+        view_box.setAutoVisible(y=enabled)
+        if enabled:
             view_box.enableAutoRange(axis=pg.ViewBox.YAxis)
         else:
             view_box.disableAutoRange(axis=pg.ViewBox.YAxis)
+        self.settings.setValue("auto_y_range", enabled)
+        self.settings.sync()
+    
+    def _on_multi_color_peaksets_toggled(self, enabled: bool):
+        """Switch the peak marker palette and persist the choice."""
+        set_peakset_colors(enabled)
+        update_peakset_colors(self.plot_widget)
+        self.settings.setValue("multi_color_peak_sets", enabled)
+        self.settings.sync()
             
 
 def main():

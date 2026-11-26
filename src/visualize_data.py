@@ -16,11 +16,36 @@ DEFAULT_LINE_COLORS = (
     "#bc56ec", "#abd47b", "#2743e0", "#8c564b"
 )
 DEFAULT_LINE_WIDTH = 2
-DEFAULT_PEAKSET_COLORS = ("#bb0000",)
+SINGLE_PEAKSET_COLOR = "#bb0000"
+MULTI_PEAKSET_COLORS = (
+    "#bb0000", "#c04b4b", "#ffc6b8", "#f54076",
+    "#FF7265", "#B61277", "#AF4178", "#C759C7",
+)
+DEFAULT_PEAKSET_COLORS = [SINGLE_PEAKSET_COLOR]
 DEFAULT_PEAKSET_SYMBOLS = {
     "brush": (False, False, True, False),
     "symbol": ("o", "s", "x", "d")
 }
+
+
+def set_peakset_colors(multi_color: bool):
+    """Select the default peak-set palette for future plots."""
+    DEFAULT_PEAKSET_COLORS[:] = (
+        MULTI_PEAKSET_COLORS if multi_color else (SINGLE_PEAKSET_COLOR,)
+    )
+
+
+def update_peakset_colors(plot_widget: pg.PlotWidget):
+    """Update peak marker colors without rebuilding plotted data."""
+    for index, (item, _peak_set) in enumerate(
+        getattr(plot_widget, "_peak_legend_entries", ())
+    ):
+        symbol_idx = index % len(DEFAULT_PEAKSET_SYMBOLS["symbol"])
+        color = DEFAULT_PEAKSET_COLORS[index % len(DEFAULT_PEAKSET_COLORS)]
+        if DEFAULT_PEAKSET_SYMBOLS["brush"][symbol_idx]:
+            item.setSymbolBrush(pg.mkBrush(color))
+        else:
+            item.setSymbolPen(pg.mkPen(color, width=2))
 
 
 class TimeAxisItem(pg.AxisItem):

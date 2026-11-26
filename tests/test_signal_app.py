@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from signal_app import SignalApp
 from signal_classes import AnalysisResult, Slice
+from visualize_data import MULTI_PEAKSET_COLORS, plot_signal
 
 
 @pytest.fixture
@@ -91,6 +92,63 @@ def test_auto_y_range_setting_loads_saves_and_reaches_plot(app_window):
 )
 def test_parse_jump_time_valid(text, expected):
     assert SignalApp._parse_jump_time(text) == pytest.approx(expected)
+
+
+def test_peakset_color_toggle_recolors_existing_graph_and_persists(app_window):
+    app_window.action_multi_color_peaksets.setChecked(False)
+    app_window.settings.setValue("multi_color_peak_sets", False)
+
+    time = np.array([0.0, 1.0])
+    result = AnalysisResult(Slice(time, np.zeros((2, 1))))
+    for index in range(3):
+        x = np.array([0.25 + index])
+        result.peaks(x, np.array([index + 1.0]), 0, f"Peaks {index}")
+    plot_signal(app_window.plot_widget, result)
+
+    entries = app_window.plot_widget._peak_legend_entries
+    items_before = tuple(item for item, _ in entries)
+    data_before = [(item.getData()[0].copy(), item.getData()[1].copy()) for item in items_before]
+
+    app_window.action_multi_color_peaksets.setChecked(True)
+    assert app_window.settings.value("multi_color_peak_sets") is True
+    assert tuple(item for item, _ in app_window.plot_widget._peak_legend_entries) == items_before
+    assert [
+        item.opts["symbolPen"].color().name()
+        if index % 4 != 2
+        else item.opts["symbolBrush"].color().name()
+        for index, item in enumerate(items_before)
+    ] == [color.lower() for color in MULTI_PEAKSET_COLORS[:3]]
+    for item, (x_before, y_before) in zip(items_before, data_before):
+        x_after, y_after = item.getData()
+        np.testing.assert_array_equal(x_after, x_before)
+        np.testing.assert_array_equal(y_after, y_before)
+
+    app_window.settings.setValue("multi_color_peak_sets", False)
+    app_window.load_settings()
+    assert not app_window.action_multi_color_peaksets.isChecked()
+    assert [
+        item.opts["symbolPen"].color().name()
+        if index % 4 != 2
+        else item.opts["symbolBrush"].color().name()
+        for index, item in enumerate(items_before)
+    ] == ["#bb0000"] * 3
+    app_window.settings.setValue("multi_color_peak_sets", True)
+    app_window.load_settings()
+    assert app_window.action_multi_color_peaksets.isChecked()
+    assert [
+        item.opts["symbolPen"].color().name()
+        if index % 4 != 2
+        else item.opts["symbolBrush"].color().name()
+        for index, item in enumerate(items_before)
+    ] == [color.lower() for color in MULTI_PEAKSET_COLORS[:3]]
+
+    plot_signal(app_window.plot_widget, result)
+    assert [
+        item.opts["symbolPen"].color().name()
+        if index % 4 != 2
+        else item.opts["symbolBrush"].color().name()
+        for index, (item, _peak_set) in enumerate(app_window.plot_widget._peak_legend_entries)
+    ] == [color.lower() for color in MULTI_PEAKSET_COLORS[:3]]
 
 
 @pytest.mark.parametrize("text", ["", "   ", "abc", "-1:00", "1:60", "1:60:00", "1:2:3:4", "-5"])
