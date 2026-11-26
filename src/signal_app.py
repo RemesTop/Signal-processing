@@ -40,6 +40,13 @@ class SignalApp(QWidget):
     
     def __init__(self):
         super().__init__()
+        # Initialize stylesheet
+        try:
+            stylesheet_path = Path(__file__).resolve().with_name("style.qss")
+            self.setStyleSheet(stylesheet_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            print(f"Stylesheet file {stylesheet_path} not found")
+            
         self.setWindowTitle("Signal app")
         self.resize(1200, 700)
 
@@ -94,6 +101,7 @@ class SignalApp(QWidget):
 
         # 3. Visualize Data button (When the button is pressed)
         self.btn = QPushButton("Run")
+        self.btn.setObjectName("runButton")
         self.btn.clicked.connect(self.visualize)
 
         # 4. Graph jump navigation controls (hidden until a graph is displayed)
@@ -137,6 +145,8 @@ class SignalApp(QWidget):
         self.plot_widget.setLabel("left", "Reading")
         self.plot_widget.setTitle(" ")
         view_box: pg.ViewBox = self.plot_widget.getViewBox()
+        # Set grid opacity
+        self.plot_widget.getPlotItem().showGrid(x=True, y=True, alpha=0.3)
         # State for slice-based loading and whole-file peak counting on large files
         self.loaded_range: tuple[float, float] | None = None
         self._analysis_request_id = 0

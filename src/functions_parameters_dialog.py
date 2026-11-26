@@ -234,7 +234,8 @@ class FunctionsParametersDialog(QDialog):
         params_scroll.setContentsMargins(0, 6, 0, 6)
         params_panel_layout.addWidget(params_scroll, 1)
 
-        self.apply_button = QPushButton("Apply")
+        self.apply_button = QPushButton("Apply Changes")
+        self.apply_button.setObjectName("applyButton")
         self.apply_button.clicked.connect(self.apply_parameters)
 
         hbox_buttons = QHBoxLayout()
