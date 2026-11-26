@@ -223,7 +223,6 @@ class SuctionDetector:
         return self
 
     #  Results
-    #
 
     @property
     def count(self) -> int:
@@ -258,6 +257,8 @@ class SuctionDetector:
             out.peaks(s.times, s.values, channel, f"{label_prefix} {s.number}", s.properties)
 
     # ---- Reporting
+    # There were mainly used for debugging, developement and seen from terminal
+    # The could be used for something, idk.
 
     def report(self, title: str = "", top_n: int = DEFAULT_TOP_N) -> str:
         """Text report with a per-suction table followed by overall averages."""
