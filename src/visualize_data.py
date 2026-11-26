@@ -151,6 +151,7 @@ def plot_signal(
     reset_y_range: bool = True,
     remove_invisible_points: bool = True,
     fit_x_range: bool = False,
+    auto_y_range: bool = False,
     peak_totals: Mapping[PeakKey, int] | None = None,
     loading_peak_keys: Collection[PeakKey] | None = None,
 ):
@@ -240,10 +241,16 @@ def plot_signal(
         center = (prev_x_min + prev_x_max) / 2
         new_min = max(x_limits[0], min(center - max_x_range / 2, x_limits[1] - max_x_range))
         view_box.setXRange(new_min, min(x_limits[1], new_min + max_x_range), padding=0)
-    if reset_y_range:
+    # Automatic y-range
+    view_box.setAutoVisible(y=auto_y_range)
+    if auto_y_range:
+        view_box.enableAutoRange(axis=pg.ViewBox.YAxis)
+    elif reset_y_range:
         # Fit Y once and lock it so the Y axis does not rescale while panning
         view_box.enableAutoRange(axis=pg.ViewBox.YAxis)
         view_box.updateAutoRange()
+        view_box.disableAutoRange(axis=pg.ViewBox.YAxis)
+    else:
         view_box.disableAutoRange(axis=pg.ViewBox.YAxis)
 
     update_peak_legend_labels(plot_widget)

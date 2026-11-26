@@ -78,6 +78,13 @@ class SignalApp(QWidget):
         self.action_param_window.setCheckable(True)
         self.action_param_window.setChecked(False)
         self.action_param_window.toggled.connect(self.parameters_dialog.setVisible)
+        view_menu.addSeparator()
+        options_section = view_menu.addAction("Options")
+        options_section.setDisabled(True)
+        self.action_auto_y_range = view_menu.addAction("Auto Y range on zoom")
+        self.action_auto_y_range.setCheckable(True)
+        self.action_auto_y_range.toggled.connect(self._set_plot_auto_y_range)
+        self.action_auto_y_range.toggled.connect(self.save_settings)
         
 
         # 1. Text input for file path and browse button
@@ -332,6 +339,13 @@ class SignalApp(QWidget):
         else:
             self.channel_combo.setCurrentText("Both channels")
 
+        saved_auto_y_range = self.settings.value("auto_y_range", False)
+        if isinstance(saved_auto_y_range, bool):
+            auto_y_range = saved_auto_y_range
+        else:
+            auto_y_range = str(saved_auto_y_range).strip().lower() in ("true", "1", "yes")
+        self.action_auto_y_range.setChecked(auto_y_range)
+
         # Selected analysis functions and their parameters
         saved_analyses = self.settings.value("analysis_functions", "")
         analyses = ()
@@ -414,6 +428,7 @@ class SignalApp(QWidget):
         """
         self.settings.setValue("file_path", self.file_input.text())
         self.settings.setValue("channel_selection", self.channel_combo.currentText())
+        self.settings.setValue("auto_y_range", self.action_auto_y_range.isChecked())
         self.settings.sync()
 
     def save_analysis_functions_and_parameters(self, evaluate: bool = True):
@@ -780,6 +795,7 @@ class SignalApp(QWidget):
             reset_y_range=reset_y_range,
             remove_invisible_points=self.remove_invisible_points,
             fit_x_range=fit_x_range,
+            auto_y_range=self.action_auto_y_range.isChecked(),
             peak_totals=self._displayed_peak_totals(),
             loading_peak_keys=self._current_loading_peak_keys(result.peak_sets),
         )
@@ -902,6 +918,17 @@ class SignalApp(QWidget):
         """Re-enable batch conversion menu item after the worker is finished."""
         self.action_convert_files.setEnabled(True)
         self.batch_conversion_worker = None
+        
+    
+    def _set_plot_auto_y_range(self, auto_range: bool):
+        """Toggle automatic y range fit for the plot."""
+        view_box = self.plot_widget.getPlotItem().getViewBox()
+        view_box.setAutoVisible(y=auto_range)
+        if auto_range:
+            view_box.enableAutoRange(axis=pg.ViewBox.YAxis)
+        else:
+            view_box.disableAutoRange(axis=pg.ViewBox.YAxis)
+            
 
 def main():
     app = QApplication(sys.argv)

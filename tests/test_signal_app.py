@@ -64,6 +64,19 @@ def test_jump_controls_hidden_until_graph_is_shown(app_window):
     assert app_window.jump_controls.x() >= app_window.btn.geometry().right() + 12
 
 
+def test_auto_y_range_setting_loads_saves_and_reaches_plot(app_window):
+    app_window.settings.setValue("auto_y_range", True)
+    app_window.load_settings()
+    assert app_window.action_auto_y_range.isChecked()
+
+    _attach_fake_plot(app_window, total_duration=1800.0)
+    assert app_window.plot_widget.getViewBox().autoRangeEnabled()[1]
+
+    app_window.action_auto_y_range.setChecked(False)
+    app_window.save_settings()
+    assert app_window.settings.value("auto_y_range", type=bool) is False
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
