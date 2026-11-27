@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np
 import pytest
 from PySide6.QtCore import QSettings, QThreadPool
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QInputDialog, QToolButton
 
 from signal_app import SignalApp
 from signal_classes import AnalysisResult, Slice
@@ -76,6 +76,35 @@ def test_auto_y_range_setting_loads_saves_and_reaches_plot(app_window):
     app_window.action_auto_y_range.setChecked(False)
     app_window.save_settings()
     assert app_window.settings.value("auto_y_range", type=bool) is False
+
+def test_run_from_time_runs_file_then_jumps_after_plot(app_window, monkeypatch):
+    app_window.show()
+    app_window.file_input.setText("signal.dat")
+    run_calls = []
+    monkeypatch.setattr(
+        QInputDialog,
+        "getText",
+        lambda *args: ("20:00", True),
+    )
+    monkeypatch.setattr(app_window, "visualize", lambda: run_calls.append(True))
+
+    assert app_window.btn.popupMode() == QToolButton.ToolButtonPopupMode.MenuButtonPopup
+    assert app_window.run_from_time_action.text() == "Run at time..."
+
+    app_window.run_from_time_action.trigger()
+
+    assert run_calls == [True]
+    assert app_window.jump_input.text() == "20:00"
+    assert app_window._jump_after_run
+
+    reloads = _stub_reload(app_window, monkeypatch)
+    span = app_window.visible_slice_seconds
+    _attach_fake_plot(app_window, total_duration=3600.0)
+
+    x_min, x_max = app_window.plot_widget.getViewBox().viewRange()[0]
+    assert np.allclose([x_min, x_max], [1200.0 - span / 2, 1200.0 + span / 2])
+    assert not app_window._jump_after_run
+    assert reloads == [{"force": True}]
 
 
 @pytest.mark.parametrize(
