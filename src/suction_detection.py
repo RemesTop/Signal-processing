@@ -10,12 +10,19 @@ import numpy as np
 
 from signal_classes import AnalysisResult, PeakSet
 
+#For csv exporting
+import csv
+import math
+from pathlib import Path
+
+
 DEFAULT_MAX_GAP = 10.0
 DEFAULT_TOP_N = 3
 
 
 #  Suction data class
 # All "top" mean etc are based on DEFAULT_TOP_N highest peaks, not all peaks in the suction.
+
 
 
 @dataclass(eq=False)
@@ -95,66 +102,16 @@ class Suction:
             "largest_peak_value": self.largest_peak_value,
             "largest_peak_time": self.largest_peak_time,
         }
+    
+    def to_csv_row(self, top_n: int = DEFAULT_TOP_N) -> dict:
+        """All per-suction statistics as plain Python types, for CSV export."""
+        return {
+            **self.to_dict(),
+            "top_mean_height": self.top_mean_height(top_n),
+            "top_mean_prominence": self.top_mean_prominence(top_n),
+            "height_variance": self.height_variance,
+        }
 
-def get_suction_info(self, number: int | None = None) -> list[dict] | dict:
-        """Structured information about the suctions.
-
-        Each entry is a dict with the keys: `number`, `start`, `end`, `duration`,
-        `n_peaks`, `largest_peak_value`, `largest_peak_time`.
-
-        Args:
-            number: If given, return only the dict of the suction with this 1-based
-                number (raises `KeyError` if it doesn't exist). Otherwise return a
-                list of dicts, one per suction, in time order.
-        """
-        if number is None:
-            return [s.to_dict() for s in self.suctions]
-        if not 1 <= number <= self.count:
-            raise KeyError(f"No suction number {number} (detected: {self.count})")
-        return self.suctions[number - 1].to_dict()
-
-def peak_labels(self) -> np.ndarray:
-        """Suction number (1-based) of every peak, in the original peak order.
-
-        Handy for graphing, e.g. `plt.scatter(times, values, c=detector.peak_labels())`.
-        """
-        labels = np.zeros(self.n_peaks_total, dtype=int)
-        for s in self.suctions:
-            labels[s.indices] = s.number
-        return labels
-
-def get_peak_info(self, peak_index: int | None = None) -> list[dict] | dict:
-        """For each peak, which suction it belongs to, plus some information about that suction.
-
-        Each entry is a dict with the keys: `peak_index` (index in the original peak
-        arrays), `time`, `value`, `suction_number`, `position_in_suction` (1-based, by
-        time), `is_largest_in_suction`, `suction_start`, `suction_end`, `suction_n_peaks`.
-
-        Args:
-            peak_index: If given, return only the dict of this peak (index in the
-                original peak arrays; raises `IndexError` if out of range). Otherwise
-                return a list of dicts, one per peak, in the original peak order.
-        """
-        rows: list[dict | None] = [None] * self.n_peaks_total
-        for s in self.suctions:
-            largest = s.largest_peak_index
-            for pos, idx in enumerate(s.indices):
-                rows[idx] = {
-                    "peak_index": int(idx),
-                    "time": float(s.times[pos]),
-                    "value": float(s.values[pos]),
-                    "suction_number": s.number,
-                    "position_in_suction": pos + 1,
-                    "is_largest_in_suction": pos == largest,
-                    "suction_start": s.start,
-                    "suction_end": s.end,
-                    "suction_n_peaks": s.n_peaks,
-                }
-        if peak_index is None:
-            return rows
-        if not 0 <= peak_index < self.n_peaks_total:
-            raise IndexError(f"Peak index {peak_index} out of range (0..{self.n_peaks_total - 1})")
-        return rows[peak_index]
 
 #  Suction detector
 #  Groups peaks into suctions based on the time gap between them, and provides reporting.
@@ -162,6 +119,7 @@ def get_peak_info(self, peak_index: int | None = None) -> list[dict] | dict:
 
 
 def _nanmean(values) -> float:
+    """Mean of the values, ignoring NaNs. Returns NaN if there are no non-NaN values."""
     values = np.asarray(values, dtype=float)
     values = values[~np.isnan(values)]
     return float(values.mean()) if values.size else float("nan")
@@ -256,9 +214,52 @@ class SuctionDetector:
         for s in self.suctions:
             out.peaks(s.times, s.values, channel, f"{label_prefix} {s.number}", s.properties)
 
+    def peak_labels(self) -> np.ndarray:
+        """Suction number (1-based) of every peak, in the original peak order.
+
+        Handy for graphing, e.g. `plt.scatter(times, values, c=detector.peak_labels())`.
+        """
+        labels = np.zeros(self.n_peaks_total, dtype=int)
+        for s in self.suctions:
+            labels[s.indices] = s.number
+        return labels
+
+    def get_peak_info(self, peak_index: int | None = None) -> list[dict] | dict:
+        """For each peak, which suction it belongs to, plus some information about that suction.
+
+        Each entry is a dict with the keys: `peak_index` (index in the original peak
+        arrays), `time`, `value`, `suction_number`, `position_in_suction` (1-based, by
+        time), `is_largest_in_suction`, `suction_start`, `suction_end`, `suction_n_peaks`.
+
+        Args:
+            peak_index: If given, return only the dict of this peak (index in the
+                original peak arrays; raises `IndexError` if out of range). Otherwise
+                return a list of dicts, one per peak, in the original peak order.
+        """
+        rows: list[dict | None] = [None] * self.n_peaks_total
+        for s in self.suctions:
+            largest = s.largest_peak_index
+            for pos, idx in enumerate(s.indices):
+                rows[idx] = {
+                    "peak_index": int(idx),
+                    "time": float(s.times[pos]),
+                    "value": float(s.values[pos]),
+                    "suction_number": s.number,
+                    "position_in_suction": pos + 1,
+                    "is_largest_in_suction": pos == largest,
+                    "suction_start": s.start,
+                    "suction_end": s.end,
+                    "suction_n_peaks": s.n_peaks,
+                }
+        if peak_index is None:
+            return rows
+        if not 0 <= peak_index < self.n_peaks_total:
+            raise IndexError(f"Peak index {peak_index} out of range (0..{self.n_peaks_total - 1})")
+        return rows[peak_index]
+
     # ---- Reporting
-    # There were mainly used for debugging, developement and seen from terminal
-    # The could be used for something, idk.
+    # These were mainly used for debugging, developement and seen from terminal
+    # Can be used for exporting a text file, but the CSV export is probably more useful for further analysis.
 
     def report(self, title: str = "", top_n: int = DEFAULT_TOP_N) -> str:
         """Text report with a per-suction table followed by overall averages."""
@@ -291,16 +292,56 @@ class SuctionDetector:
         lines.append(f"Mean suction length:          {np.mean([s.duration for s in self.suctions]):.3f} s")
         lines.append(bar)
         return "\n".join(lines)
+    
 
-
+# This will probably stay as is, for debugging
 def print_suction_report(result: AnalysisResult,
                          max_gap: float = DEFAULT_MAX_GAP,
                          top_n: int = DEFAULT_TOP_N) -> None:
     """Print a suction report for every peak set in an `AnalysisResult`
-    (one report per channel / analysis label)."""
+    (one report per channel / analysis label).
+    Mainly used for debugging by printing to terminal."""
     if not result.peak_sets:
         print("Suction report: no peak sets in the analysis result.", flush=True)
         return
     for peak_set in result.peak_sets:
         detector = SuctionDetector.from_peak_set(peak_set, max_gap=max_gap)
         print(detector.report(f"Channel {peak_set.channel + 1} [{peak_set.label}]", top_n), flush=True)
+
+
+#  CSV export, figured that this would be more "useful" way to get report out of the app.
+
+CSV_COLUMNS = [
+    "channel", "label", "number", "start", "end", "duration", "n_peaks",
+    "largest_peak_value", "largest_peak_time",
+    "top_mean_height", "top_mean_prominence", "height_variance",
+]
+
+
+def export_suction_csv(result: AnalysisResult,
+                       path: str | Path,
+                       max_gap: float = DEFAULT_MAX_GAP,
+                       top_n: int = DEFAULT_TOP_N) -> int:
+    """Write one CSV row per suction, for every peak set in an `AnalysisResult`.
+    NaN values (e.g. prominence when it wasn't computed) are written as empty cells.
+    Can be called with just the `result` and `path`, or with `max_gap` and `top_n` to override the defaults.
+    Separator is always a comma, and the file is UTF-8 encoded.
+
+
+    Returns:
+        Number of data rows written.
+    """
+    n_rows = 0
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+        writer.writeheader()
+        for peak_set in result.peak_sets:
+            detector = SuctionDetector.from_peak_set(peak_set, max_gap=max_gap)
+            for s in detector.suctions:
+                row = {"channel": peak_set.channel + 1, "label": peak_set.label,
+                       **s.to_csv_row(top_n)}
+                row = {k: ("" if isinstance(v, float) and math.isnan(v) else v)
+                       for k, v in row.items()}
+                writer.writerow(row)
+                n_rows += 1
+    return n_rows
