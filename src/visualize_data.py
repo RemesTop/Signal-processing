@@ -16,11 +16,36 @@ DEFAULT_LINE_COLORS = (
     "#bc56ec", "#abd47b", "#2743e0", "#8c564b"
 )
 DEFAULT_LINE_WIDTH = 2
-DEFAULT_PEAKSET_COLORS = ("#bb0000",)
+SINGLE_PEAKSET_COLOR = "#bb0000"
+MULTI_PEAKSET_COLORS = (
+    "#bb0000", "#c04b4b", "#ffc6b8", "#f54076",
+    "#FF7265", "#B61277", "#AF4178", "#C759C7",
+)
+DEFAULT_PEAKSET_COLORS = [SINGLE_PEAKSET_COLOR]
 DEFAULT_PEAKSET_SYMBOLS = {
     "brush": (False, False, True, False),
     "symbol": ("o", "s", "x", "d")
 }
+
+
+def set_peakset_colors(multi_color: bool):
+    """Select the default peak-set palette for future plots."""
+    DEFAULT_PEAKSET_COLORS[:] = (
+        MULTI_PEAKSET_COLORS if multi_color else (SINGLE_PEAKSET_COLOR,)
+    )
+
+
+def update_peakset_colors(plot_widget: pg.PlotWidget):
+    """Update peak marker colors without rebuilding plotted data."""
+    for index, (item, _peak_set) in enumerate(
+        getattr(plot_widget, "_peak_legend_entries", ())
+    ):
+        symbol_idx = index % len(DEFAULT_PEAKSET_SYMBOLS["symbol"])
+        color = DEFAULT_PEAKSET_COLORS[index % len(DEFAULT_PEAKSET_COLORS)]
+        if DEFAULT_PEAKSET_SYMBOLS["brush"][symbol_idx]:
+            item.setSymbolBrush(pg.mkBrush(color))
+        else:
+            item.setSymbolPen(pg.mkPen(color, width=2))
 
 
 class TimeAxisItem(pg.AxisItem):
@@ -151,6 +176,7 @@ def plot_signal(
     reset_y_range: bool = True,
     remove_invisible_points: bool = True,
     fit_x_range: bool = False,
+    auto_y_range: bool = False,
     peak_totals: Mapping[PeakKey, int] | None = None,
     loading_peak_keys: Collection[PeakKey] | None = None,
 ):
@@ -240,10 +266,16 @@ def plot_signal(
         center = (prev_x_min + prev_x_max) / 2
         new_min = max(x_limits[0], min(center - max_x_range / 2, x_limits[1] - max_x_range))
         view_box.setXRange(new_min, min(x_limits[1], new_min + max_x_range), padding=0)
-    if reset_y_range:
+    # Automatic y-range
+    view_box.setAutoVisible(y=auto_y_range)
+    if auto_y_range:
+        view_box.enableAutoRange(axis=pg.ViewBox.YAxis)
+    elif reset_y_range:
         # Fit Y once and lock it so the Y axis does not rescale while panning
         view_box.enableAutoRange(axis=pg.ViewBox.YAxis)
         view_box.updateAutoRange()
+        view_box.disableAutoRange(axis=pg.ViewBox.YAxis)
+    else:
         view_box.disableAutoRange(axis=pg.ViewBox.YAxis)
 
     update_peak_legend_labels(plot_widget)
