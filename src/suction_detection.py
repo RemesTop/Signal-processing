@@ -15,10 +15,14 @@ import csv
 import math
 from pathlib import Path
 
-
+# Constants for suction detection
 DEFAULT_MAX_GAP = 10.0
 DEFAULT_TOP_N = 3
 
+# Constants for peak classification (Quantiles)
+DEFAULT_LOW_Q = 1 / 3
+DEFAULT_HIGH_Q = 2 / 3
+AMPLITUDE_CLASSES = ("low", "middle", "high")
 
 #  Suction data class
 # All "top" mean etc are based on DEFAULT_TOP_N highest peaks, not all peaks in the suction.
@@ -90,6 +94,27 @@ class Suction:
     def height_variance(self) -> float:
         """Population variance of the peak heights (0 for a single peak)."""
         return float(np.var(self.values))
+
+    def amplitude_tresholds(self, low_q: float = DEFAULT_LOW_Q, high_q: float = DEFAULT_HIGH_Q) -> tuple[float, float]:
+        """Return the low and high amplitude thresholds for this suction, based on quantiles."""
+        if not 0 < low_q < high_q < 1:
+            raise ValueError("low_q and high_q must be between 0 and 1, with low_q < high_q")
+        low_threshold, high_threshold = float(np.quantile(self.values, low_q)), float(np.quantile(self.values, high_q))
+        return low_threshold, high_threshold
+
+    def classify_peaks(self, low_q: float = DEFAULT_LOW_Q, high_q: float = DEFAULT_HIGH_Q) -> np.ndarray:
+        """Classify each peak as "low", "middle" or "high" based on quantiles of the peak heights."""
+        low_threshold, high_threshold = self.amplitude_tresholds(low_q, high_q)
+        classes = np.empty(self.n_peaks, dtype=object)
+        classes[self.values < low_threshold] = AMPLITUDE_CLASSES[0]
+        classes[(self.values >= low_threshold) & (self.values < high_threshold)] = AMPLITUDE_CLASSES[1]
+        classes[self.values >= high_threshold] = AMPLITUDE_CLASSES[2]
+        return classes
+
+    def class_counts(self, low_q: float = DEFAULT_LOW_Q, high_q: float = DEFAULT_HIGH_Q) -> dict[str, int]:
+        """Count how many peaks of each amplitude class are in this suction."""
+        classes = self.classify_peaks(low_q, high_q)
+        return {cls: int(np.sum(classes == cls)) for cls in AMPLITUDE_CLASSES}
 
     def to_dict(self) -> dict:
         """Basic information about this suction as plain Python types."""
@@ -224,6 +249,16 @@ class SuctionDetector:
             labels[s.indices] = s.number
         return labels
 
+    def peak_amplitude_classification(self, low_q: float = DEFAULT_LOW_Q, high_q: float = DEFAULT_HIGH_Q) -> np.ndarray:
+        """Classify each peak as "low", "middle" or "high" based on quantiles of the peak heights.
+
+        Returns an array of strings, in the original peak order.
+        """
+        classes = np.empty(self.n_peaks_total, dtype=object)
+        for s in self.suctions:
+            classes[s.indices] = s.classify_peaks(low_q, high_q)
+        return classes
+
     def get_peak_info(self, peak_index: int | None = None) -> list[dict] | dict:
         """For each peak, which suction it belongs to, plus some information about that suction.
 
@@ -239,6 +274,7 @@ class SuctionDetector:
         rows: list[dict | None] = [None] * self.n_peaks_total
         for s in self.suctions:
             largest = s.largest_peak_index
+            classes = s.classify_peaks(DEFAULT_LOW_Q, DEFAULT_HIGH_Q)
             for pos, idx in enumerate(s.indices):
                 rows[idx] = {
                     "peak_index": int(idx),
@@ -250,6 +286,7 @@ class SuctionDetector:
                     "suction_start": s.start,
                     "suction_end": s.end,
                     "suction_n_peaks": s.n_peaks,
+                    "amplitude_class": classes[pos]
                 }
         if peak_index is None:
             return rows
