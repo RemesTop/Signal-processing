@@ -8,7 +8,7 @@ import sys
 
 import numpy as np
 from scipy import ndimage
-from scipy.signal import find_peaks, peak_widths, butter, sosfiltfilt, decimate
+from scipy.signal import find_peaks, peak_widths, butter, sosfiltfilt, decimate, savgol_filter, medfilt
 try:
     import pybaselines
 except ImportError:
@@ -418,6 +418,7 @@ def extra_lowpass(s: Slice, out: AnalysisResult,
         AnalysisParameter("decimation_factor", 10, "Decimation factor"),
         AnalysisParameter("low_cutoff", 10, "Lower cutoff (Hz)", "Frequencies below this are attenuated."),
         AnalysisParameter("high_cutoff", 250, "Upper cutoff (Hz)", "Frequencies above this are attenuated."),
+        AnalysisParameter("bias", 0, "Bias"),
         *FIND_PEAKS_PARAMETERS
     ),
 )
@@ -425,6 +426,7 @@ def band_pass_filter(s: Slice, out: AnalysisResult,
                      decimation_factor: int = 10,
                      low_cutoff: float = 10,
                      high_cutoff: float = 250,
+                     bias: float = 0,
                      **peak_options):
     """Anti-alias, downsample, band-pass filter, and detect peaks.
 
@@ -459,10 +461,207 @@ def band_pass_filter(s: Slice, out: AnalysisResult,
             high_cutoff=high_cutoff,
             fs=sample_rate
         )
+        
+        x -= bias
 
         out.line(time, x, ch, "Band-pass filtered")
 
         scipy_find_peaks(out, time, x, ch, "Band-pass filtered", peak_options)
+
+
+@analysis_function(
+    "Savitzky-Golay filter",
+    (
+        AnalysisParameter("decimation_factor", 10, "Decimation factor"),
+        AnalysisParameter("window_length", 21, "Window length"),
+        AnalysisParameter("polyorder", 2, "Polyorder"),
+        *FIND_PEAKS_PARAMETERS
+    ),
+)
+def savitzy_golay(s: Slice, out: AnalysisResult,
+                  decimation_factor: int = 10,
+                  window_length: int = 21,
+                  polyorder: int = 2,
+                  **peak_options):
+    """`custom_decimation` with an added low-pass filter after downsampling.
+
+    **Line:**<br>
+    Downsampled by a factor of 10 using `butterworth_lowpass_filter` and
+    `downsampler.downsample`. Then a Savitzky-Golay filter is applied.
+
+    **Peaks:**<br>
+    `scipy.signal.find_peaks` with a 5 ms minimum peak distance and 40 prominence.
+    """
+    peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate) / decimation_factor))
+    
+    # Filter and detect peaks only for requested channel(s) to optimize performance
+    for ch in s.channel_indices:
+        x = s.data[:, ch]
+        
+        x = butterworth_lowpass_filter(
+            x,
+            decimation_factor=decimation_factor,
+            fs=s.sample_rate
+        )
+        
+        time = s.time[::decimation_factor]
+        x = downsample(x, decimation_factor)
+        
+        # Savitzky-Golay
+        x = savgol_filter(
+            x,
+            window_length=window_length,
+            polyorder=polyorder
+        )
+        
+        out.line(time, x, ch, "Savitzky-Golay")
+        
+        # Find peaks
+        scipy_find_peaks(out, time, x, ch, "Savitzky-Golay", peak_options)
+
+
+@analysis_function(
+    "Gaussian kernel filter",
+    (
+        AnalysisParameter("decimation_factor", 10, "Decimation factor"),
+        AnalysisParameter("sigma", 3, "Sigma", "Scalar standard deviation for Gaussian kernel"),
+        *FIND_PEAKS_PARAMETERS
+    ),
+)
+def gaussian_kernel(s: Slice, out: AnalysisResult,
+                  decimation_factor: int = 10,
+                  sigma: int = 3,
+                  **peak_options):
+    """`custom_decimation` with an added low-pass filter after downsampling.
+
+    **Line:**<br>
+    Downsampled by a factor of 10 using `butterworth_lowpass_filter` and
+    `downsampler.downsample`. Then a Gaussian kernel filter is applied.
+
+    **Peaks:**<br>
+    `scipy.signal.find_peaks` with a 5 ms minimum peak distance and 40 prominence.
+    """
+    peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate) / decimation_factor))
+    
+    # Filter and detect peaks only for requested channel(s) to optimize performance
+    for ch in s.channel_indices:
+        x = s.data[:, ch]
+        
+        x = butterworth_lowpass_filter(
+            x,
+            decimation_factor=decimation_factor,
+            fs=s.sample_rate
+        )
+        
+        time = s.time[::decimation_factor]
+        x = downsample(x, decimation_factor)
+        
+        # Gaussian kernel
+        x = ndimage.gaussian_filter1d(
+            x,
+            sigma=sigma
+        )
+        
+        out.line(time, x, ch, "Gaussian kernel")
+        
+        # Find peaks
+        scipy_find_peaks(out, time, x, ch, "Gaussian kernel", peak_options)
+
+
+@analysis_function(
+    "Moving average filter",
+    (
+        AnalysisParameter("decimation_factor", 10, "Decimation factor"),
+        AnalysisParameter("filter_size", 11, "Filter size"),
+        *FIND_PEAKS_PARAMETERS
+    ),
+)
+def moving_average(s: Slice, out: AnalysisResult,
+                  decimation_factor: int = 10,
+                  filter_size: int = 3,
+                  **peak_options):
+    """`custom_decimation` with an added low-pass filter after downsampling.
+
+    **Line:**<br>
+    Downsampled by a factor of 10 using `butterworth_lowpass_filter` and
+    `downsampler.downsample`. Then a moving average filter is applied.
+
+    **Peaks:**<br>
+    `scipy.signal.find_peaks` with a 5 ms minimum peak distance and 40 prominence.
+    """
+    peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate) / decimation_factor))
+    
+    # Filter and detect peaks only for requested channel(s) to optimize performance
+    for ch in s.channel_indices:
+        x = s.data[:, ch]
+        
+        x = butterworth_lowpass_filter(
+            x,
+            decimation_factor=decimation_factor,
+            fs=s.sample_rate
+        )
+        
+        time = s.time[::decimation_factor]
+        x = downsample(x, decimation_factor)
+        
+        # Moving average
+        x = ndimage.uniform_filter1d(
+            x,
+            size=filter_size
+        )
+        
+        out.line(time, x, ch, "Moving average")
+        
+        # Find peaks
+        scipy_find_peaks(out, time, x, ch, "Moving average", peak_options)
+
+
+@analysis_function(
+    "Median filter",
+    (
+        AnalysisParameter("decimation_factor", 10, "Decimation factor"),
+        AnalysisParameter("kernel_size", 3, "Kernel size"),
+        *FIND_PEAKS_PARAMETERS
+    ),
+)
+def median_filtered(s: Slice, out: AnalysisResult,
+                  decimation_factor: int = 10,
+                  kernel_size: int = 3,
+                  **peak_options):
+    """`custom_decimation` with an added low-pass filter after downsampling.
+
+    **Line:**<br>
+    Downsampled by a factor of 10 using `butterworth_lowpass_filter` and
+    `downsampler.downsample`. Then a median filter is applied.
+
+    **Peaks:**<br>
+    `scipy.signal.find_peaks` with a 5 ms minimum peak distance and 40 prominence.
+    """
+    peak_options.setdefault("distance", max(1, int(0.005 * s.sample_rate) / decimation_factor))
+    
+    # Filter and detect peaks only for requested channel(s) to optimize performance
+    for ch in s.channel_indices:
+        x = s.data[:, ch]
+        
+        x = butterworth_lowpass_filter(
+            x,
+            decimation_factor=decimation_factor,
+            fs=s.sample_rate
+        )
+        
+        time = s.time[::decimation_factor]
+        x = downsample(x, decimation_factor)
+        
+        # Median filter
+        x = medfilt(
+            x,
+            kernel_size=kernel_size
+        )
+        
+        out.line(time, x, ch, "Median filter")
+        
+        # Find peaks
+        scipy_find_peaks(out, time, x, ch, "Median filter", peak_options)
 
 
 @analysis_function(
